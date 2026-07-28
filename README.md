@@ -4,10 +4,15 @@ Android CMD
 ##核心模块
 
 · 系统与文件：DIR/TREE（目录树）、STAT（文件元数据）、SIZE/DU（空间占用）、COPY/MOVE/DEL。
+
 · 网络工具：PING（支持大包与洪水模拟）、SCAN（IP 存活探测）、PORTSCAN、FTP（交互式客户端）、DOWNLOAD。
+
 · 编解码与校验：BASE64、URLENCODE/DECODE、MD5、SHA1、CRC32。
+
 · 性能监控：TM/TASKMGR（进程详情与内存）、TEMP（传感器温度）、FREE/DF。
+
 · 控制台扩展：CECHO（自定义高亮输出）、CALC/BC（计算器）、TIMER、WATCH（循环执行）。
+
 
 ##启动方式
 
