@@ -1,16 +1,13 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="Releases 0.02(dev 0.166)"
+CMD_VER="Releases 0.03(dev 0.170)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
 
-# 要求:完整bash4.0+的环境
-# 提示:转到⤸行以直接永久设置全局临时目录
-CMD_TMPDIR_File_Line="560"
-
 # ---------- 正式代码----------
 CMD_RUNNING_Err_title="\033[31m----------------CMD ERROR----------------\033[0m"
+CMD_delimiter="----------------------------------------------------" #分割横线
 CMD_Target="要求:必须由 bash 4.0+ 执行,且支持数组特性"
 err0() {
     printf "\033[31m%s\033[0m\n" "$*" >&2
@@ -65,7 +62,6 @@ fi
 export System_by_DC10XRAY_MIT2026_CMD_ACTIVE=1
 echo -e "\033[32m---------------CMD Running---------------\033[0m"
 # -------正式运行:工具检测与初始化 -------
-CMD_delimiter="----------------------------------------------------" #分割横线
 init_tools() {
     if command -v busybox >/dev/null 2>&1; then
         _AWK="busybox awk"; _CAT="busybox cat"; _CUT="busybox cut"
@@ -91,7 +87,6 @@ init_tools() {
     fi
 }
 init_tools
-
 # ---------- 加载外部资源函数 ----------
 # 固定脚本路径, 无论执行方式如何都指向正确位置
 export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -127,7 +122,6 @@ if [ ${#LOADED_RESOURCES[@]} -eq 0 ]; then
     fi
 fi
 # ----------------------------------------------
-
 cmd_resource() {
     case "$1" in
         ""|--help|-h)
@@ -164,6 +158,47 @@ cmd_resource() {
             ;;
     esac
 }
+# ---------- 配置文件 ----------
+COLOR_CONFIG_FILE="$SCRIPT_DIR/resource/.cmd_config"
+TMP_DIR=""   # 默认值, 先定义, 后续由 load_config 或初始化逻辑覆盖
+
+load_config() {
+    if [ -f "$COLOR_CONFIG_FILE" ]; then
+        while IFS='=' read -r key value; do
+            # 跳过空行和注释
+            [[ -z "$key" || "$key" == \#* ]] && continue
+            # 去除首尾空格
+            key="$(echo "$key" | xargs)"
+            value="$(echo "$value" | xargs)"
+            case "$key" in
+                BG)   BG="$value" ;;
+                FG)   FG="$value" ;;
+                TMPDIR) TMP_DIR="$value" ;;
+            esac
+        done < "$COLOR_CONFIG_FILE"
+    fi
+}
+
+save_config() {
+    {
+        echo "BG=$BG"
+        echo "FG=$FG"
+        echo "TITLE=$CUSTOM_TITLE"
+        echo "TMPDIR=$TMP_DIR"
+    } > "$COLOR_CONFIG_FILE" 2>/dev/null
+}
+
+load_config
+# ---------- 加载随机标语 ----------
+declare -a SPLASHES=()
+load_splashes() {
+    SPLASHES=()
+    local splash_file="$RESOURCE_DIR/splashes.txt"
+    if [ -f "$splash_file" ]; then
+        mapfile -t SPLASHES < "$splash_file"
+    fi
+}
+load_splashes
 # ----------关于退出:在此开始:全局信号控制变量 ----------
 GLOBAL_CMD_RUNNING=0
 GLOBAL_CHILD_PID=0
@@ -376,51 +411,7 @@ confirm() {
     done
 }
 
-# ---三个重要函数---
-# 按键检测函数
-get_key() {
-    if command -v stty >/dev/null 2>&1; then
-        old=$(stty -g 2>/dev/null)
-        stty -icanon min 0 time 2 2>/dev/null
-        char1=$(dd bs=1 count=1 2>/dev/null)
-        if [ -z "$char1" ]; then
-            stty "$old" 2>/dev/null
-            echo ""
-            return
-        fi
-        if [ "$char1" = "$(printf '\033')" ]; then
-            stty -icanon min 0 time 0 2>/dev/null
-            char2=$(dd bs=1 count=1 2>/dev/null 2>/dev/null)
-            if [ -z "$char2" ]; then
-                stty "$old" 2>/dev/null
-                echo "$(printf '\033')"
-                return
-            elif [ "$char2" = "[" ]; then
-                char3=$(dd bs=1 count=1 2>/dev/null 2>/dev/null)
-                if [ "$char3" = "F" ]; then
-                    stty "$old" 2>/dev/null
-                    echo "END"
-                    return
-                else
-                    stty "$old" 2>/dev/null
-                    echo "$(printf '\033')"
-                    return
-                fi
-            else
-                stty "$old" 2>/dev/null
-                echo "$(printf '\033')"
-                return
-            fi
-        else
-            stty "$old" 2>/dev/null
-            echo "$char1"
-            return
-        fi
-    else
-        read -t 0.2 -s -n 1 key 2>/dev/null && echo "$key" || echo ""
-    fi
-}
-
+# ---二个重要函数---
 # 递归杀死进程树(你可以在别的地方引用它来杀死一些东西)
 _kill_process_tree() {
     local pid=$1
@@ -462,7 +453,6 @@ _kill_process_tree_force() {
     # 最后杀目标进程
     kill -KILL "$pid" 2>/dev/null
 }
-
 # ---------- 文件操作函数 ----------
 # 用法: file_op <copy|move> <源1> [源2 ...] <目标>
 file_op() {
@@ -522,21 +512,21 @@ file_op() {
     done
     return 0
 }
-# ---------- 加载随机标语 ----------
-declare -a SPLASHES=()
-load_splashes() {
-    SPLASHES=()
-    local splash_file="$RESOURCE_DIR/splashes.txt"
-    if [ -f "$splash_file" ]; then
-        mapfile -t SPLASHES < "$splash_file"
-    fi
-}
-load_splashes
-
-# ---------- 标题 ----------
-# 自定义标题(默认为空)
+# ------------标题------------
 CUSTOM_TITLE=""
 get_title() {
+    # ----- 读取标题配置(每次显示时读取, 确保最新) -----
+    if [ -f "$COLOR_CONFIG_FILE" ]; then
+        local title_line=$($_GREP -E '^TITLE=' "$COLOR_CONFIG_FILE" | $_HEAD -1)
+        if [ -n "$title_line" ]; then
+            CUSTOM_TITLE="${title_line#*=}"
+            CUSTOM_TITLE="$(echo "$CUSTOM_TITLE" | xargs)"   # 去除首尾空格
+        else
+            CUSTOM_TITLE=""   # 如果没有 TITLE 行, 置空
+        fi
+    fi
+
+    # ----- 显示标题 -----
     if [ -n "$CUSTOM_TITLE" ]; then
         cecho "$CUSTOM_TITLE"
     else
@@ -547,7 +537,7 @@ get_title() {
     fi
     cecho "Copyright (c) 2026 DC10Xray"
 
-    # 如果有标语, 在此处独立显示(斜体黄色)
+    # 标语部分不变
     if [ ${#SPLASHES[@]} -gt 0 ]; then
         local random_index=$(( RANDOM % ${#SPLASHES[@]} ))
         local splash="${SPLASHES[$random_index]}"
@@ -557,14 +547,12 @@ get_title() {
     cecho "使用 HELP 或 /? 来查看命令列表(Ctrl+C退出)"
 }
 
-# 全局临时目录,默认为空
-TMP_DIR=""
 # ---------- 临时目录命令 ----------
 cmd_tmpdir() {
     if [ $# -eq 0 ]; then
         err "用法: TMPDIR see/set/about"
         cecho "  TMPDIR see         查看当前生效的临时目录"
-        cecho "  TMPDIR set <目录>  为当前会话设置临时目录"
+        cecho "  TMPDIR set <目录>  设置临时目录"
         cecho "  TMPDIR about       显示详细帮助"
         return 1
     fi
@@ -587,6 +575,7 @@ cmd_tmpdir() {
             if touch "$testfile" 2>/dev/null; then
                 rm -f "$testfile"
                 TMP_DIR="$newdir"
+                save_config
                 cecho "临时目录已设置为: $TMP_DIR"
             else
                 err "目录 $newdir 不可写,请选择其他目录"
@@ -596,24 +585,21 @@ cmd_tmpdir() {
         about)
             cecho -b "一些命令需要历史目录,所以务必设置(不设置也没关系,有默认的)"
             cecho -b "配置方式(按优先级从高到低): "
-            cecho "1. TMPDIR set <目录>"
-            cecho "#仅在本会话生效,重启脚本后失效"
-            cecho "☆2. 编辑脚本第$CMD_TMPDIR_File_Line行,设置 TMP_DIR 变量"
-            cecho "#永久生效,每次启动脚本都会读取"
-            cecho "#使用 TMPDIR set 命令临时覆盖此设置"
-            cecho "3. 默认使用此脚本路径下的tmp文件夹,没有时创建"
-            cecho "4. 回退路径: /storage/emulated/0/tmp"
+            cecho "1. TMPDIR set <目录> (永久保存)"
+            cecho "#设置后自动保存到配置文件,重启后生效"
+            cecho "2. 默认使用此脚本路径下的tmp文件夹,没有时创建"
+            cecho "3. 回退路径: /storage/emulated/0/tmp"
             cecho "#当以上方法均不可用时使用"
             echo ""
             cecho -b "用法:"
             cecho "  TMPDIR see         查看当前生效的临时目录"
-            cecho "  TMPDIR set <目录>  为当前会话设置临时目录"
+            cecho "  TMPDIR set <目录>  设置临时目录"
             cecho "  TMPDIR about       显示本帮助"
             ;;
         *)
             err "用法: TMPDIR see/set/about"
             cecho "  TMPDIR see         查看当前生效的临时目录"
-            cecho "  TMPDIR set <目录>  为当前会话设置临时目录"
+            cecho "  TMPDIR set <目录>  设置临时目录"
             cecho "  TMPDIR about       显示详细帮助"
             return 1
             ;;
@@ -651,7 +637,7 @@ cmd_help() {
     cecho -b "系统信息"
     cecho "  NOW             显示当前时钟"
     cecho "  CAL [模式/年份] [月份] 显示日历(无参数详细帮助)"
-    cecho "  CLOCK           显示实时时间(ESC退出,每0.1s刷新)"
+    cecho "  CLOCK           显示实时时间(Ctrl+C退出,每0.1s刷新)"
     cecho "  FREE            显示当前内存使用"
     cecho "  DF              显示磁盘使用情况"
     cecho "  GETPROP [KEY]   系统属性(空KEY分页显示全部)"
@@ -664,7 +650,7 @@ cmd_help() {
     cecho "  TM/TOP/TASKMGR  任务管理器"
     cecho "  TEMP            显示温度传感器、温度墙和温控状态"
     cecho "  MONITOR ⤸"
-    cecho "  -监控时间、内存和温度(按ESC键退出,约每2s刷新)"
+    cecho "  -监控时间、内存和温度(按Ctrl+C键退出,约每2s刷新)"
     cecho "  WHOAMI/OP       显示当前用户UID和权限"
     cecho "  WHICH           查找命令路径"
     cecho "  DISK [超时/ms] [-q 仅显示色块] [-w 仅可读写分区] ⤸"
@@ -683,7 +669,7 @@ cmd_help() {
     cecho "  -下载网络上的文件到本地的指定位置(Ctrl+C停止下载)"
     cecho ""
     cecho "  ST/SPEEDTEST [-u URL] [-t 超时] ⤸"
-    cecho "  -网络测速(默认 Cloudflare 10MB)"
+    cecho "  -网络测速(默认 Cloudflare 10MB,可能消耗流量,Ctrl+C停止测速)"
     echo ""
     cecho -b "编解码与校验(实验性)"
     cecho "  BASE64/B64 [-d] <字符串> / [-d] -f <文件> ⤸"
@@ -710,19 +696,20 @@ cmd_help() {
     cecho "  ERR [消息]             显示错误样式消息(红色)"
     cecho "  YES [内容]             刷屏某一内容直至按下Ctrl+C"
     cecho "  HACK <目标>            穷举可打印字符直到找到目标"
-    cecho "  TIMER [秒数]/[时间戳]  倒计时/闹钟(ESC取消)"
+    cecho "  TIMER [秒数]/[时间戳]  倒计时/闹钟(Ctrl+C取消)"
     cecho "  SLEEP <秒数>           睡眠指定时间(Ctrl+C停止)"
     cecho "  WATCH <秒数> <命令> [参数] ⤸"
-    cecho "  -每隔指定时间清除屏幕并运行命令(无参数帮助)"
-    cecho "  REPEAT <次数> <命令> [参数]   重复执行指定次数命令"
+    cecho "  -每隔指定时间清除屏幕并运行命令(Ctrl+C终止,无参数帮助)"
+    cecho "  REPEAT <次数> <命令> [参数] ⤸"
+    cecho "  -重复执行指定次数命令(Ctrl+C终止,无参数帮助)"
     cecho "  CALC <表达式>                 整数计算器 ⤸"
     cecho "  -(无参数交互模式,-h/--help帮助,不是整数就死)"
     cecho "  AWKC <表达式>                 AWK计算器 ⤸"
     cecho "  -(无参数交互模式,-h/--help帮助)"
     cecho "  BC [-s 精度] <表达式>         任意精度计算器 ⤸"
-    cecho "  -(无参数交互模式,-h/--help帮助)"
+    cecho "  -(无参数交互模式,-h/--help帮助,Ctrl+C终止正在进行的计算)"
     cecho "$CMD_delimiter"
-    cecho "  SH [--force] <脚本路径> [参数] ⤸"
+    cecho "  SH <脚本路径> [参数] ⤸"
     cecho "  -在此脚本内执行外部 SHELL 脚本(Ctrl+C终止目标脚本)"
     cecho "  C/CMD <系统命令> [参数] ⤸"
     cecho "  -执行任意系统命令/内置命令内部名称(Ctrl+C终止)"
@@ -734,7 +721,7 @@ cmd_help() {
     cecho "  HELP <OR> /?                  此命令列表"
     cecho "  EXIT/EXIT15                   退出"
     cecho "  EXIT9                         调用强制退出"
-    cecho -c "#C0C0C0" "  #在任何时候按下Ctrl+C都能退出脚本(特别说明除外)"
+    cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
     cecho "$CMD_delimiter"
     echo ""
 }
@@ -769,11 +756,13 @@ cmd_title() {
 
     if [ "$1" = "-def" ]; then
         CUSTOM_TITLE=""
+        save_config
         cecho "标题已恢复为默认值"
         return 0
     fi
 
     CUSTOM_TITLE="$*"
+    save_config
     cecho "标题已设置为: $CUSTOM_TITLE"
 }
 
@@ -873,9 +862,16 @@ cmd_hack() {
     local temp=""
     local charset="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\]^_\`{|}~ "
 
+    # 本地 trap 捕获 Ctrl+C
+    local old_trap=$(trap -p INT)
+    local interrupted=0
+    trap 'interrupted=1' INT
+
     for (( i=0; i<${#target}; i++ )); do
+        if [ $interrupted -eq 1 ]; then break; fi
         local ch="${target:$i:1}"
         for (( j=0; j<${#charset}; j++ )); do
+            if [ $interrupted -eq 1 ]; then break; fi
             local try="${charset:$j:1}"
             printf "%s%s\n" "$temp" "$try"
             sleep 0.00001
@@ -886,6 +882,13 @@ cmd_hack() {
         done
     done
     echo ""
+
+    eval "$old_trap" 2>/dev/null
+    if [ $interrupted -eq 1 ]; then
+        cecho "HACK 被中断"
+        return 130
+    fi
+    return 0
 }
 
 cmd_echo() {
@@ -1375,16 +1378,16 @@ cmd_free() {
 }
 
 cmd_monitor() {
-    cecho "正在监控时间、内存和温度(按ESC键终止)"
+    cecho "正在监控时间、内存和温度(按Ctrl+C终止)"
     cecho "$CMD_delimiter"
     
     local saved_bg=$BG
     local saved_fg=$FG
     local stop_monitor=0
     
-    # ---------- 设置运行标志 ----------
-    GLOBAL_CMD_RUNNING=1
-    GLOBAL_SIGNAL_RECEIVED=0
+    # 保存旧的 INT trap, 设置自己的
+    local old_trap=$(trap -p INT)
+    trap 'stop_monitor=1' INT
     
     # ---------- 1. 定义关键温度传感器路径 ----------
     local thermal_base="/sys/class/thermal"
@@ -1450,12 +1453,6 @@ cmd_monitor() {
     
     # ---------- 4. 主显示循环 ----------
     while [ $stop_monitor -eq 0 ]; do
-        # 检查信号标志
-        if [ $GLOBAL_SIGNAL_RECEIVED -eq 1 ]; then
-            stop_monitor=1
-            break
-        fi
-        
         # 4.1 获取当前时间
         local current_time=$($_DATE "+%Y-%m-%d %a %H:%M:%S")
         
@@ -1501,13 +1498,7 @@ cmd_monitor() {
         _cprint -c 95 -n "GPU: ${gpu_temp:-N/A}  "
         _cprint -c 92 "Battery: ${bat_temp:-N/A}"
         
-        # 6. 非阻塞检查 ESC 键
-        key=$(get_key)
-        if [ "$key" = "$(printf '\033')" ]; then
-            stop_monitor=1
-        fi
-        
-        # 7. 精确等待到下一秒
+        # 6. 精确等待到下一秒
         if [ $stop_monitor -eq 0 ]; then
             local now_ms
             if date +%s%N >/dev/null 2>&1; then
@@ -1540,7 +1531,8 @@ cmd_monitor() {
     echo ""
     cecho "已退出监控"
     
-    GLOBAL_CMD_RUNNING=0
+    # 恢复旧的 trap
+    eval "$old_trap" 2>/dev/null
     return 0
 }
 
@@ -1550,27 +1542,16 @@ cmd_clock() {
     local stop=0
     local last_color_time=$(date +%s)
 
-    # ---------- 设置运行标志 ----------
-    GLOBAL_CMD_RUNNING=1
-    GLOBAL_SIGNAL_RECEIVED=0
+    # 保存旧的 trap, 设置自己的 INT 处理
+    local old_trap=$(trap -p INT)
+    trap 'stop=1' INT
 
-    cecho "(按ESC键退出时钟显示)"
+    cecho "(按Ctrl+C退出时钟显示)"
     cecho "$CMD_delimiter"
     while [ $stop -eq 0 ]; do
-        # 检查信号标志
-        if [ $GLOBAL_SIGNAL_RECEIVED -eq 1 ]; then
-            stop=1
-            break
-        fi
-
         local time_str=$(date "+%Y-%m-%d %a %H:%M:%S")
         local color=${colors[$color_index]}
         printf "\r\033[K\033[1;%sm实时时钟: [%s]\033[0m" "$color" "$time_str"
-
-        key=$(get_key)
-        if [ "$key" = "$(printf '\033')" ]; then
-            stop=1
-        fi
 
         local now=$(date +%s)
         if [ $((now - last_color_time)) -ge 1 ]; then
@@ -1584,7 +1565,8 @@ cmd_clock() {
     printf "\r\033[K\n"
     cecho "时钟已退出"
 
-    GLOBAL_CMD_RUNNING=0
+    # 恢复旧的 trap
+    eval "$old_trap" 2>/dev/null
 }
 
 cmd_getprop() {
@@ -2248,54 +2230,61 @@ cmd_bc() {
         return 0
     fi
 
-if [ $# -eq 0 ]; then
-    cecho "(BC/EXIT退出)"
-    # 交互模式
-    local scale=20
-    cecho "当前精度: $scale"
-    while true; do
-        printf "\033[92m[BC]>>> \033[0m"
-        read -r input
-        [ -z "$input" ] && continue
-        local lower=$(echo "$input" | tr '[:upper:]' '[:lower:]')
-        if [ "$lower" = "bc" ] || [ "$lower" = "exit" ]; then
-            echo ""
-            break
-        fi
+    if [ $# -eq 0 ]; then
+        cecho "(BC/EXIT退出, 按Ctrl+C停止正在进行的运算)"
+        # 交互模式
+        local scale=20
+        cecho "当前精度: $scale"
 
-        local new_scale="$scale"
-        local expr=""
-        local tokens=($input)
-        local i=0
-        local skip=0
-        while [ $i -lt ${#tokens[@]} ]; do
-            if [ "${tokens[$i]}" = "-s" ] && [ $((i+1)) -lt ${#tokens[@]} ] && [[ "${tokens[$((i+1))]}" =~ ^[0-9]+$ ]]; then
-                new_scale="${tokens[$((i+1))]}"
-                if [ "$new_scale" -ge 1 ] && [ "$new_scale" -le 10000 ] 2>/dev/null; then
-                    if [ "$new_scale" != "$scale" ]; then
-                        cecho "新精度: $new_scale"
-                        scale="$new_scale"
+        # 忽略 INT 信号, 防止退出循环(但计算中会被 _bc_compute 内部 trap 覆盖)
+        trap '' INT
+
+        while true; do
+            printf "\033[92m[BC]>>> \033[0m"
+            read -r input
+            [ -z "$input" ] && continue
+            local lower=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+            if [ "$lower" = "bc" ] || [ "$lower" = "exit" ]; then
+                echo ""
+                break
+            fi
+
+            local new_scale="$scale"
+            local expr=""
+            local tokens=($input)
+            local i=0
+            local skip=0
+            while [ $i -lt ${#tokens[@]} ]; do
+                if [ "${tokens[$i]}" = "-s" ] && [ $((i+1)) -lt ${#tokens[@]} ] && [[ "${tokens[$((i+1))]}" =~ ^[0-9]+$ ]]; then
+                    new_scale="${tokens[$((i+1))]}"
+                    if [ "$new_scale" -ge 1 ] && [ "$new_scale" -le 10000 ] 2>/dev/null; then
+                        if [ "$new_scale" != "$scale" ]; then
+                            cecho "新精度: $new_scale"
+                            scale="$new_scale"
+                        fi
+                    else
+                        err "精度必须在 1-10000 之间"
+                        skip=1
                     fi
+                    i=$((i+2))
                 else
-                    err "精度必须在 1-10000 之间"
-                    skip=1
+                    expr="$expr ${tokens[$i]}"
+                    i=$((i+1))
                 fi
-                i=$((i+2))
-            else
-                expr="$expr ${tokens[$i]}"
-                i=$((i+1))
+            done
+            expr=$(echo "$expr" | sed 's/^[[:space:]]*//')
+
+            if [ $skip -eq 0 ] && [ -n "$expr" ]; then
+                _bc_compute "$expr" "$scale"
             fi
         done
-        expr=$(echo "$expr" | sed 's/^[[:space:]]*//')
 
-        if [ $skip -eq 0 ] && [ -n "$expr" ]; then
-            _bc_compute "$expr" "$scale"
-        fi
-    done
-    return
-fi
+        # 恢复默认信号处理
+        trap - INT
+        return 0
+    fi
 
-    # 单次执行(带参数)
+    # ---------- 单次执行(带参数) ----------
     local scale=20
     local expression=""
     local args=("$@")
@@ -2313,7 +2302,6 @@ fi
     expression=$(echo "$expression" | sed 's/^[[:space:]]*//')
 
     if [ -n "$new_scale" ]; then
-        # 非交互模式精度范围检查
         if [ "$new_scale" -ge 1 ] && [ "$new_scale" -le 10000 ] 2>/dev/null; then
             scale="$new_scale"
         else
@@ -2327,7 +2315,6 @@ fi
         return 1
     fi
 
-    # 非交互模式输出精度
     cecho "精度: $scale"
     _bc_compute "$expression" "$scale" "prefix"
 }
@@ -2403,6 +2390,116 @@ _bc_compute() {
     else
         cecho "$result"
     fi
+}
+_bc_compute() {
+    local expr="$1"
+    local scale="$2"
+    local prefix_mode="$3"
+
+    # 预处理
+    expr=$(echo "$expr" | sed 's/π/pi/g; s/÷/\//g; s/×/*/g; s/·/*/g')
+    while [[ "$expr" =~ (\+\+|\+\-|\-\+|\-\-) ]]; do
+        expr=$(echo "$expr" | sed -E 's/\+\+/+/g; s/\+-/-/g; s/-\+/-/g; s/--/+/g')
+    done
+    if echo "$expr" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+        err "表达式错误: 数字中包含多个小数点"
+        return 1
+    fi
+    if echo "$expr" | grep -qE '/0([^0-9.]|$)'; then
+        err "表达式错误: 除数不能为零"
+        return 1
+    fi
+
+    expr=$(echo "$expr" | sed -E 's/√\(/sqrt(/g; s/√([0-9.]+)/sqrt(\1)/g')
+    expr=$(echo "$expr" | sed -E 's/([0-9]+)!/fact(\1)/g')
+    expr=$(echo "$expr" | sed -E 's/\be\b/e(1)/g')
+
+    local bc_script="
+        define fact(n) {
+            auto i, r;
+            r = 1;
+            for (i = 1; i <= n; i++) {
+                r *= i;
+            }
+            return r;
+        }
+        define sin(x) { return s(x); }
+        define cos(x) { return c(x); }
+        define tan(x) { return s(x)/c(x); }
+        define asin(x) { return a(x/sqrt(1-x*x)); }
+        define acos(x) { return a(sqrt(1-x*x)/x); }
+        define atan(x) { return a(x); }
+        define atan2(y,x) { return a(y/x); }
+        define log(x) { return l(x); }
+        define ln(x) { return l(x); }
+        define log10(x) { return l(x)/l(10); }
+        define exp(x) { return e(x); }
+        scale = $scale;
+        pi = 4 * a(1);
+        $expr
+    "
+
+    # ---------- 使用后台执行 + trap 支持中断 ----------
+    local result=""
+    local bc_pid=""
+    local tempfile=""
+    # 使用 TMP_DIR 创建临时文件
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] && [ -w "$TMP_DIR" ]; then
+        tempfile=$(mktemp -p "$TMP_DIR" 2>/dev/null) || {
+            tempfile="$TMP_DIR/bc_$$_$(date +%s%N)_$RANDOM"
+            touch "$tempfile" 2>/dev/null || {
+                err "无法创建临时文件"
+                return 1
+            }
+        }
+    else
+        tempfile=$(mktemp 2>/dev/null) || {
+            err "无法创建临时文件"
+            return 1
+        }
+    fi
+
+    {
+        bc -l <<< "$bc_script" > "$tempfile" 2>&1
+    } &
+    bc_pid=$!
+
+    local old_trap=$(trap -p INT)
+    trap 'kill -INT $bc_pid 2>/dev/null; wait $bc_pid 2>/dev/null; rm -f "$tempfile"; return 1' INT
+
+    wait $bc_pid
+    local wait_ret=$?
+    eval "$old_trap" 2>/dev/null
+
+    if [ $wait_ret -ne 0 ]; then
+        err "计算被中断或出错"
+        rm -f "$tempfile"
+        return 1
+    fi
+
+    result=$(cat "$tempfile" 2>/dev/null)
+    rm -f "$tempfile"
+
+    if [ -z "$result" ]; then
+        err "计算错误(无输出)"
+        return 1
+    fi
+
+    if echo "$result" | grep -qi "divide by zero\|Math error: divide by 0"; then
+        err "计算错误: 除数不能为零"
+        return 1
+    elif echo "$result" | grep -qi "Parse error\|syntax error"; then
+        err "表达式解析错误"
+        return 1
+    fi
+
+    result=$(echo "$result" | sed ':a; /\\$/ { N; s/\\\n//; ta }' 2>/dev/null || echo "$result")
+    if [ "$prefix_mode" = "prefix" ]; then
+        cecho "结果: $result"
+    else
+        cecho "$result"
+    fi
+    return 0
 }
 # ---------- AWKC 基于awk的计算器 ----------
 cmd_awkc() {
@@ -2550,7 +2647,6 @@ cmd_calc() {
 
 cmd_color() {
     if [ $# -eq 0 ]; then
-        # 无参数显示帮助
         {
             cecho -b "设置控制台默认前景和背景色"
             cecho "COLOR -def            恢复默认颜色(黑底亮白)"
@@ -2574,6 +2670,7 @@ cmd_color() {
     if [ "$1" = "-def" ]; then
         BG=40
         FG=97
+        save_config
         cecho "颜色已重置为默认值"
         return 0
     fi
@@ -2590,8 +2687,8 @@ cmd_color() {
         return 1
     fi
 
-    local bg_char=$(echo "$arg" | $_CUT -c1)
-    local fg_char=$(echo "$arg" | $_CUT -c2)
+    local bg_char=$(echo "$arg" | cut -c1)
+    local fg_char=$(echo "$arg" | cut -c2)
 
     case $bg_char in
         0) BG=40;;   1) BG=44;;   2) BG=42;;   3) BG=46;;
@@ -2610,6 +2707,7 @@ cmd_color() {
     esac
 
     cecho "颜色已设置为背景[$bg_char]前景[$fg_char]"
+    save_config
     return 0
 }
 
@@ -2692,7 +2790,7 @@ cmd_sh() {
     fi
 
     if [ $# -eq 0 ]; then
-        err "用法: SH [--force] <脚本路径> [参数]"
+        err "用法: SH <脚本路径> [参数]"
         return 1
     fi
 
@@ -2901,7 +2999,7 @@ cecho "100/dev100/dev_build_0.100 -正如名字所说"
 cecho "yesyesyes/yyy/yy/yesyes -YES YES YES!!!"
 cecho "command not found/commandnotfound -command not found!!!"
 err "cmd_bomb_fork -炸弹,将会导致设备死机!!!"
-cecho "$CMD_delimiter -这也是个命令,它是分割线"
+cecho "$CMD_delimiter / $CMD_RUNNING_Err_title -无意义"
 cecho "$CMD_delimiter"
 }
 debug_0() {
@@ -2933,141 +3031,6 @@ debug_1() {
     fi
     exit "$code"
 }
-# ---------- laugh ----------
-cmd_laugh_114514() {
-    if ! confirm "进入这个隐藏命令吗(可能使你无法退出,造成的影响与作者无关,内容仅供娱乐)?"; then
-        return
-    fi
-    if ! confirm "确认?(你已经被警告过了)"; then
-        return
-    fi
-    # 就是不退出,你气不气?
-    cmd_cls_no_title
-    cecho "$CMD_delimiter"
-    cecho "野兽先辈的命令臭死符 [版本:114514.1919810]"
-    cecho "Copyright (c) 1919 野兽先辈"
-    cecho "使用 HELP 或 /? 不能查看命令列表(Ctrl+C退不出)"
-    echo ""
-    echo ""
-    echo -e "\033[33m<野兽先辈/???>:嗯哼哼哼!啊啊啊啊啊啊!啊啊啊啊啊啊啊哈哈呃!哼!哼!~\033[0m"
-    sleep 2
-    echo -e "\033[31m--------------CMD ERROR:臭死了--------------\033[0m"
-    echo "[进程未结束 (error stink) - 按回车也关不闭]"
-    trap 'echo -e "[进程结束未出错 (stopping error stink) - Ctrl+C也关不闭]\n\033[36m[System]:检测到沼气爆炸,预计污染半径114514km,放弃一切关闭尝试,立即删除.sh文件\033[0m"; sleep 0.5' INT TERM QUIT
-    while true; do
-        sleep 1145141919810
-    done
-}
-cmd_laugh_100() {
-    cecho "[在这里只需要按Ctrl+C就会退出该命令:D]"
-    cecho "$CMD_delimiter"
-    sleep 0.2
-    #第100个开发版本彩蛋
-    local old_trap=$(trap -p INT)
-    trap 'break' INT
-
-    local spin=('|' '/' '-' '\')
-    local colors=(31 32 33 34 35 36 37)
-    local i=0 c=0
-
-    while true; do
-        printf "\r[ %c ] \033[%dmThe 100th dev build version!!! (Build Time: 2026-07-20)\033[0m" \
-               "${spin[i]}" "${colors[c]}"
-        i=$(( (i+1) % 4 ))
-        c=$(( (c+1) % 7 ))
-        sleep 0.3
-    done
-
-    printf "\n"
-    # 恢复原来的 INT 处理
-    eval "$old_trap" 2>/dev/null || true
-}
-cmd_laugh_yyy() {
-   if ! confirm "YES YES YES?(Ctrl+C终止)"; then
-       return
-   fi
-
-   # 保存旧的 INT 陷阱
-   local old_trap=$(trap -p INT)
-   local interrupted=0
-   local yes_pid=""
-
-   # 设置新的 INT 陷阱
-   trap 'interrupted=1; [ -n "$yes_pid" ] && kill $yes_pid 2>/dev/null' INT
-
-   # 后台运行 yes, 并获取 PID
-   yes "YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES YES" &
-   yes_pid=$!
-
-   # 等待 yes 结束(可能被信号中断)
-   wait $yes_pid 2>/dev/null
-
-   # 恢复旧的 INT 陷阱(若原来没有则恢复默认)
-   if [ -n "$old_trap" ]; then
-       eval "$old_trap"
-   else
-       trap - INT
-   fi
-
-   # 检查是否被中断
-   if [ $interrupted -eq 1 ]; then
-       echo ""
-       cecho -c 36 "[yes is stop]" >&2
-       return 130
-   fi
-}
-cmd_laugh_command_not_found_0() {
-    if [ "$1" = "not" ] && [ "$2" = "found" ] && [ $# -eq 2 ]; then
-        cmd_laugh_command_not_found
-    else
-        err "未知命令 \"command\", 请使用 HELP 或 /? 来查看命令列表"
-    fi
-}
-cmd_laugh_command_not_found() {
-local line_count_laugh=$(wc -l < "$0")
-if ! confirm "command not found?(如不想影响你的工作,请输入N)"; then
-   return
-   fi
-if ! confirm "确认?(可能使你无法退出,造成的影响与作者无关,你已经被警告过了)"; then
-    return
-    fi
-cmd_cls_no_title
-sleep 0.1
-cecho "command not found?"
-sleep 1
-cecho "command not found!"
-sleep 0.8
-err "command not found!!!"
-sleep 0.2
-echo -e "\033[36m[System]:@$USERNAME You will play egg\033[0m"
-sleep 0.8
-trap 'echo -e "\n$0: line $line_count_laugh: cmd_exit9: command not found]"; sleep 0.5' INT TERM QUIT
-    while true; do
-        yes "bash: command not found: command not found!!!!!!"
-    done
-}
-cmd_laugh_wtf() {
-    cmd_cls_no_title
-    local target="Hello World Im Gay"
-    local temp=""
-    local charset="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\]^_\`{|}~ "
-    
-    for (( i=0; i<${#target}; i++ )); do
-        local ch="${target:$i:1}"
-        for (( j=0; j<${#charset}; j++ )); do
-            local try="${charset:$j:1}"
-            
-            # 换行打印，形成滚动刷屏效果，加 0.01 秒延时
-            printf "%s%s\n" "$temp" "$try"
-            sleep 0.00001
-            
-            if [[ "$try" == "$ch" ]]; then
-                temp+="$ch"
-                break
-            fi
-        done
-    done
-}
 # ---------- 主逻辑 ---------
 # 标题
 get_title
@@ -3075,7 +3038,8 @@ echo ""
 echo ""
 
 # ---------- 初始化临时目录 ----------
-if [ -z "$TMP_DIR" ]; then
+# 如果 TMP_DIR 未设置或无效, 则回退到默认
+if [ -z "$TMP_DIR" ] || [ ! -d "$TMP_DIR" ] || [ ! -w "$TMP_DIR" ]; then
     if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null && [ -w "$SCRIPT_DIR/tmp" ]; then
         TMP_DIR="$SCRIPT_DIR/tmp"
     else
@@ -3270,7 +3234,7 @@ case "$cmd" in
     # ---------- laugh ----------
     $CMD_delimiter|$CMD_RUNNING_Err_title)   cecho "bro 复制这个何意味?" ;;
     commandnotfound)      cmd_laugh_command_not_found ;;
-    command)        cmd_laugh_command_not_found_0 "${args_array[@]}" ;;
+    command)        cmd_laugh_command_not_found "${args_array[@]}" ;;
     114514|1145141919810) cmd_laugh_114514 ;;
     100|dev100|dev_build_0.100) cmd_laugh_100 ;;
     yesyesyes|yyy|yy|yesyes) cmd_laugh_yyy ;;
