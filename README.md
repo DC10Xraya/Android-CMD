@@ -4,7 +4,6 @@ Android CMD
 ![Language](https://img.shields.io/badge/Language-Shell-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Lines](https://img.shields.io/badge/Code-7000%2B-blue)
-
 ![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
 一个集成了常用运维, 网络与系统监控功能的交互式 Bash 脚本, 专为 Android 平台优化
@@ -48,3 +47,9 @@ bash CMD_main_dev.bash
 MIT License
 
 Copyright (c) 2026 DC10Xray
+
+[![Bilibili](https://img.shields.io/badge/UID:1389583280-ff69b4?logo=bilibili&logoColor=white)](https://space.bilibili.com/1389583280?spm_id_from=333.33.0.0)
+
+![QQ](https://img.shields.io/badge/QQ-3896444757-blue?logo=tencent-qq&logoColor=white)
+
+[![Email](https://img.shields.io/badge/Email-3896444757@qq.com-brightgreen?logo=gmail&logoColor=white)](mailto:3896444757@qq.com)
