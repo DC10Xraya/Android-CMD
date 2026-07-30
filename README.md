@@ -3,6 +3,9 @@ Android CMD
 
 ![Language](https://img.shields.io/badge/Language-Shell-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
+![Lines](https://img.shields.io/badge/Code-7000%2B-blue)
+
+![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
 一个集成了常用运维, 网络与系统监控功能的交互式 Bash 脚本, 专为 Android 平台优化
 
