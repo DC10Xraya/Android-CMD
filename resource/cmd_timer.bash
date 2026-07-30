@@ -8,7 +8,7 @@ cmd_timer() {
         return 1
     fi
 
-    # 关键改动: 合并所有参数为一个字符串,用空格分隔
+    # 合并所有参数为一个字符串
     local arg="$*"
     local target_ts=0
     local mode="countdown"  # countdown 或 alarm
@@ -23,7 +23,7 @@ cmd_timer() {
         fi
         target_ts=$(date +%s)
         target_ts=$((target_ts + seconds))
-        cecho "倒计时 ${seconds} 秒,ESC取消"
+        cecho "倒计时 ${seconds} 秒，按 Ctrl+C 取消"
     else
         # 闹钟模式: 尝试解析日期时间
         if ! command -v date >/dev/null 2>&1; then
@@ -40,7 +40,7 @@ cmd_timer() {
             err "闹钟时间必须在未来"
             return 1
         fi
-        cecho "闹钟设置为 $arg,按 ESC 取消"
+        cecho "闹钟设置为 $arg，按 Ctrl+C 取消"
         mode="alarm"
     fi
 
@@ -48,11 +48,15 @@ cmd_timer() {
     GLOBAL_CMD_RUNNING=1
     GLOBAL_SIGNAL_RECEIVED=0
 
-    # ---------- 计时循环 ----------
+    # ---------- 本地信号处理 (覆盖全局 INT) ----------
     local cancelled=0
-    local last_second=""
+    local old_trap=$(trap -p INT)
+    trap 'cancelled=1' INT   # 只设置标志，循环内检查退出
 
-    while true; do
+    # ---------- 计时循环 ----------
+    local last_second=""
+    while [ $cancelled -eq 0 ]; do
+        # 兼容全局信号（例如 TERM 仍会触发全局退出，这里不做额外处理）
         if [ $GLOBAL_SIGNAL_RECEIVED -eq 1 ]; then
             cancelled=1
             break
@@ -86,14 +90,7 @@ cmd_timer() {
             last_second="$remaining"
         fi
 
-        key=$(get_key)
-        if [ "$key" = "$(printf '\033')" ]; then
-            cancelled=1
-            printf "\r\033[K"
-            cecho "计时已取消"
-            break
-        fi
-
+        # 精确睡眠到下一秒（避免忙等）
         if [ $remaining -gt 0 ]; then
             local now_ms
             if date +%s%N >/dev/null 2>&1; then
@@ -116,11 +113,17 @@ cmd_timer() {
 
     printf "\r\033[K\n"
 
+    # ---------- 恢复原来的 INT 陷阱 ----------
+    eval "$old_trap" 2>/dev/null
+
+    # ---------- 处理退出 ----------
     if [ $cancelled -eq 1 ]; then
         GLOBAL_CMD_RUNNING=0
+        cecho "计时已取消"
         return 130
     fi
 
+    # 正常结束（时间到）
     echo ""
     for i in {1..46}; do
         err "---------------!!!时间到!!!---------------"
