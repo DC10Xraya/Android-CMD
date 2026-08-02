@@ -1,65 +1,60 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="Releases 0.03(dev 0.170)"
+CMD_VER="Releases 0.04(dev 0.178)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
 
-# ---------- 正式代码----------
-CMD_RUNNING_Err_title="\033[31m----------------CMD ERROR----------------\033[0m"
-CMD_delimiter="----------------------------------------------------" #分割横线
+# ---------运行前检查---------
+err() { printf "\033[31m%s\033[0m\n" "$*" >&2; } # 错误样式
+CMD_RUNNING_Err_title="----------------CMD ERROR----------------"
 CMD_Target="要求:必须由 bash 4.0+ 执行,且支持数组特性"
-err0() {
-    printf "\033[31m%s\033[0m\n" "$*" >&2
-}
 
-# -------运行前-------
-#1.必须支持bash
-if ! command -v bash >/dev/null 2>&1; then
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "未检测到bash环境(bash命令未找到)"
-    err0 "$CMD_Target"
-    exit 127
-fi
-#2.必须由bash解释器执行
+#bash 
 if [ -z "$BASH_VERSION" ]; then
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "系统中存在bash命令,但未通过其执行,请使用bash执行"
-    err0 "$CMD_Target"
+    err "$CMD_RUNNING_Err_title"
+    err "请使用 bash 执行!"
+    err "$CMD_Target"
     exit 64
 fi
-#3.检查bash版本 (需要 4.0+)
-bash_major=${BASH_VERSION%%.*}
-if [ "$bash_major" -lt 4 ]; then
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "已经检测到由bash执行,但当前bash版本过低(${BASH_VERSION}),需要4.0+"
-    err0 "$CMD_Target"
-    echo -e "提示:在终端中输入bash --version或者help\n第一行:“GNU bash, [HERE]→version 5.2.37←[HERE]-release (aarch64-unknown-linux-android)”\n即可查看你的bash版本,例如:这里是5.2.37" >&2
+if ! (arr=(1 2); (( ${#arr[@]} == 2 ))) 2>/dev/null; then
+    err "$CMD_RUNNING_Err_title"
+    err "当前 bash 版本过低(4.0-)或功能不完整(不支持数组)"
+    err "$CMD_Target"
     exit 70
 fi
-#4.验证数组特性是否可用 (虽然已检测版本,但以防伪造或阉割)
-if ! (arr=(1 2); [ ${#arr[@]} -eq 2 ]) 2>/dev/null; then
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "已检测到bash 4.0+解释器执行,但不支持数组特性,可能当前bash是阉割版本或为伪造版本号(${BASH_VERSION})"
-    err0 "$CMD_Target"
-    exit 70
-fi
-#5.检测BC
-if ! command -v bc >/dev/null 2>&1; then
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "需要BC计算器支持但未检测到BC命令存在"
-    err0 "请安装BC或确保 busybox 包含BC命令"
-    echo "(你已经通过了bash环境检测)" >&2
+
+#必须工具
+MISSING=""
+for cmd in awk grep sed cat cut head tail; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        MISSING="$MISSING $cmd"
+    fi
+done
+if [ -n "$MISSING" ]; then
+    err "$CMD_RUNNING_Err_title"
+    err "缺少以下核心命令: $MISSING"
+    err "请安装对应的软件包"
     exit 127
 fi
-#6.变量检测: 防止重复执行导致无限循环
+
+#BC
+if ! command -v bc >/dev/null 2>&1; then
+    err "$CMD_RUNNING_Err_title"
+    err "需要BC计算器支持但未检测到BC命令存在"
+    err "请安装BC或确保 busybox 包含BC命令"
+    exit 127
+fi
+
+#防止重复执行
 if [ -n "${System_by_DC10XRAY_MIT2026_CMD_ACTIVE}" ]; then
     sleep 0.2
-    echo -e "$CMD_RUNNING_Err_title"
-    err0 "脚本已经在此会话活跃运行(检测到活跃变量),请新建一个会话"
+    err "$CMD_RUNNING_Err_title"
+    err "脚本已经在此会话活跃运行(检测到活跃变量),请新建一个会话"
     exit 69
 fi
 export System_by_DC10XRAY_MIT2026_CMD_ACTIVE=1
+
 echo -e "\033[32m---------------CMD Running---------------\033[0m"
 # -------正式运行:工具检测与初始化 -------
 init_tools() {
@@ -87,6 +82,8 @@ init_tools() {
     fi
 }
 init_tools
+
+CMD_delimiter="----------------------------------------------------" #定义分割横线
 # ---------- 加载外部资源函数 ----------
 # 固定脚本路径, 无论执行方式如何都指向正确位置
 export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -116,12 +113,12 @@ load_resources
 
 if [ ${#LOADED_RESOURCES[@]} -eq 0 ]; then
     if [ ! -d "$RESOURCE_DIR" ]; then
-        err0 "警告: resource 目录不存在, 外部命令将不可用" >&2
+        err "警告: resource 目录不存在, 外部命令将不可用" >&2
     else
-        err0 "警告: resource 目录下未找到任何 cmd_*.bash 文件" >&2
+        err "警告: resource 目录下未找到任何 cmd_*.bash 文件" >&2
     fi
 fi
-# ----------------------------------------------
+
 cmd_resource() {
     case "$1" in
         ""|--help|-h)
@@ -135,27 +132,40 @@ cmd_resource() {
             cecho "如果某个命令的资源文件缺失, 且这个命令不在主程序内, 则该命令将不可用"
             ;;
         load)
-            if [ ${#LOADED_RESOURCES[@]} -eq 0 ]; then
-                cecho "没有加载任何资源文件"
-                return
+            local show_all=0
+            if [ "$2" = "-debug" ]; then
+            show_all=1
             fi
-            cecho -b "已加载的外部资源文件:"
-            local idx=1
-            for rel_path in "${LOADED_RESOURCES[@]}"; do
-                cecho "  $idx. $rel_path"
-                ((idx++))
-            done
-            ;;
-        reload)
-            cecho "正在重新加载资源文件..."
-            load_resources
-            cecho "重新加载完成, 共加载 ${#LOADED_RESOURCES[@]} 个资源文件"
-            ;;
-        *)
-            err0 "未知子命令: $1"
-            cecho "使用 RESOURCE 查看帮助"
-            return 1
-            ;;
+
+        if [ ${#LOADED_RESOURCES[@]} -eq 0 ]; then
+        cecho "没有加载任何资源文件"
+        return
+    fi
+
+        local filtered=()
+    for rel_path in "${LOADED_RESOURCES[@]}"; do
+        if [ $show_all -eq 1 ]; then
+            filtered+=("$rel_path")
+        else
+            # 过滤laugh/debug
+            if [[ ! "${rel_path,,}" =~ laugh|debug ]]; then
+                filtered+=("$rel_path")
+            fi
+        fi
+    done
+
+    if [ ${#filtered[@]} -eq 0 ]; then
+        cecho "未显示任何可显示资源"
+        return
+    fi
+
+    cecho -b "已加载的外部资源文件:"
+    local idx=1
+    for rel_path in "${filtered[@]}"; do
+        cecho "  $idx. $rel_path"
+        ((idx++))
+    done
+    ;;
     esac
 }
 # ---------- 配置文件 ----------
@@ -199,7 +209,7 @@ load_splashes() {
     fi
 }
 load_splashes
-# ----------关于退出:在此开始:全局信号控制变量 ----------
+# ----------关于退出:全局信号控制变量 ----------
 GLOBAL_CMD_RUNNING=0
 GLOBAL_CHILD_PID=0
 GLOBAL_SIGNAL_RECEIVED=0
@@ -284,16 +294,11 @@ cleanup_temp_files() {
     fi
 }
 
-
-
+# ------------CECHO 相关------------
 # 保存真实终端文件描述符
 exec 3>/dev/tty
-
-# ------------CECHO 相关------------
 BG=40   # 默认背景
 FG=97   # 默认前景
-
-err() { printf "\033[31m%s\033[0m\n" "$*" >&2; } # 错误样式
 
 # 文字输出说明:cecho(无参数,参数见下)为控制台颜色,err为红色,echo、printf保留原有功能
 # -n不换行,-c指定前景色,-cb指定背景色,-b粗,-I斜,-u下划线,-s删除线,-r类似默认echo
@@ -396,8 +401,73 @@ cprint_block() {
     done
 }
 
+cmd_color() {
+    if [ $# -eq 0 ]; then
+        {
+            cecho -b "设置控制台默认前景和背景色"
+            cecho "COLOR -def            恢复默认颜色(黑底亮白)"
+            cecho "COLOR [背景][前景]    设置颜色,如 COLOR 0A"
+            echo ""
+            cecho -b "颜色代码: "
+            cecho "   0 = 黑色       8 = 灰色"
+            cecho "   1 = 蓝色       9 = 淡蓝"
+            cecho "   2 = 绿色       A = 淡绿"
+            cecho "   3 = 青色       B = 淡青"
+            cecho "   4 = 红色       C = 淡红"
+            cecho "   5 = 紫色       D = 淡紫"
+            cecho "   6 = 黄色       E = 淡黄"
+            cecho "   7 = 白色       F = 亮白"
+            echo ""
+            cecho "示例: COLOR 0A    黑色背景亮绿前景"
+        }
+        return 0
+    fi
 
+    if [ "$1" = "-def" ]; then
+        BG=40
+        FG=97
+        save_config
+        cecho "颜色已重置为默认值"
+        return 0
+    fi
 
+    if [ $# -gt 1 ]; then
+        err "参数数量错误用法: COLOR [背景][前景] 或 COLOR -def 恢复默认"
+        return 1
+    fi
+
+    local arg=$(echo "$1" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
+    
+    if [ ${#arg} -ne 2 ]; then
+        err "无效颜色参数使用 COLOR 无参数查看帮助"
+        return 1
+    fi
+
+    local bg_char=$(echo "$arg" | cut -c1)
+    local fg_char=$(echo "$arg" | cut -c2)
+
+    case $bg_char in
+        0) BG=40;;   1) BG=44;;   2) BG=42;;   3) BG=46;;
+        4) BG=41;;   5) BG=45;;   6) BG=43;;   7) BG=47;;
+        8) BG=100;;  9) BG=104;;  A) BG=102;;  B) BG=106;;
+        C) BG=101;;  D) BG=105;;  E) BG=103;;  F) BG=107;;
+        *) err "无效背景颜色代码 '$bg_char'使用 COLOR 无参数查看帮助"; return 1;;
+    esac
+
+    case $fg_char in
+        0) FG=30;;   1) FG=34;;   2) FG=32;;   3) FG=36;;
+        4) FG=31;;   5) FG=35;;   6) FG=33;;   7) FG=37;;
+        8) FG=90;;   9) FG=94;;   A) FG=92;;   B) FG=96;;
+        C) FG=91;;   D) FG=95;;   E) FG=93;;   F) FG=97;;
+        *) err "无效前景颜色代码 '$fg_char'使用 COLOR 无参数查看帮助"; return 1;;
+    esac
+
+    cecho "颜色已设置为背景[$bg_char]前景[$fg_char]"
+    save_config
+    return 0
+}
+
+# ----------重要函数----------
 # 二次确认函数
 confirm() {
     while true; do
@@ -411,7 +481,6 @@ confirm() {
     done
 }
 
-# ---二个重要函数---
 # 递归杀死进程树(你可以在别的地方引用它来杀死一些东西)
 _kill_process_tree() {
     local pid=$1
@@ -437,6 +506,7 @@ _kill_process_tree() {
         fi
     fi
 }
+
 # 暴力版本
 _kill_process_tree_force() {
     local pid=$1
@@ -453,6 +523,7 @@ _kill_process_tree_force() {
     # 最后杀目标进程
     kill -KILL "$pid" 2>/dev/null
 }
+
 # ---------- 文件操作函数 ----------
 # 用法: file_op <copy|move> <源1> [源2 ...] <目标>
 file_op() {
@@ -683,6 +754,26 @@ cmd_help() {
     cecho "  -生成符合要求的随机密码(-h/--help帮助)"
     cecho "  RAND [长度]               生成随机数(默认四位数)"
     echo ""
+    cecho -b "杂项"
+    cecho "  ECHO/PRINT [消息]      显示消息(-h/--help帮助)"
+    cecho "  PRINTF/ECHO -e         解析代码的显示消息"
+    cecho "  CECHO [参数] [消息]    我自定义的显示消息(-h/--help帮助)"
+    cecho "  ERR [消息]             显示错误样式消息(红色)"
+    cecho "  YES [内容]             刷屏某一内容直至按下Ctrl+C"
+    cecho "  HACK <目标>        穷举可打印字符直到找到目标"
+    cecho "  HACK2 <目标>       使用二分法穷举可打印字符直到找到目标"
+    cecho "  CALC <表达式>                 整数计算器 ⤸"
+    cecho "  -(无参数交互模式,-h/--help帮助,不是整数就死)"
+    cecho "  AWKC <表达式>                 AWK计算器 ⤸"
+    cecho "  -(无参数交互模式,-h/--help帮助)"
+    cecho "  BC [-s 精度] <表达式>         任意精度计算器 ⤸"
+    cecho "  -(无参数交互模式,-h/--help帮助,Ctrl+C终止正在进行的计算)"
+    cecho "  TIMER [秒数]/[时间戳]  倒计时/闹钟(Ctrl+C取消)"
+    cecho "  SLEEP <秒数>           睡眠指定时间(Ctrl+C停止)"
+    cecho "  WATCH <秒数> <命令> [参数] ⤸"
+    cecho "  -每隔指定时间清除屏幕并运行命令(Ctrl+C终止,无参数帮助)"
+    cecho "  REPEAT <次数> <命令> [参数] ⤸"
+    cecho "  -重复执行指定次数命令(Ctrl+C终止,无参数帮助)"
     cecho -b "控制台"
     cecho "  CLS/CLEAR/CLEAN        清除屏幕"
     cecho "  CLSNT/CLEARNT/CLEANNT  清除屏幕(无标题)"
@@ -690,24 +781,10 @@ cmd_help() {
     cecho "  TITLE [-def]/[字符串](无参数帮助)   设置控制台标题"
     cecho "  TMPDIR set [目录]/see/about   设置/查看/关于临时目录"
     cecho "  RESOURCE load/reload          查看加载资源/重新加载资源"
-    cecho "  ECHO/PRINT [消息]      显示消息(-h/--help帮助)"
-    cecho "  PRINTF/ECHO -e         解析代码的显示消息"
-    cecho "  CECHO [参数] [消息]    我自定义的显示消息(-h/--help帮助)"
-    cecho "  ERR [消息]             显示错误样式消息(红色)"
-    cecho "  YES [内容]             刷屏某一内容直至按下Ctrl+C"
-    cecho "  HACK <目标>            穷举可打印字符直到找到目标"
-    cecho "  TIMER [秒数]/[时间戳]  倒计时/闹钟(Ctrl+C取消)"
-    cecho "  SLEEP <秒数>           睡眠指定时间(Ctrl+C停止)"
-    cecho "  WATCH <秒数> <命令> [参数] ⤸"
-    cecho "  -每隔指定时间清除屏幕并运行命令(Ctrl+C终止,无参数帮助)"
-    cecho "  REPEAT <次数> <命令> [参数] ⤸"
-    cecho "  -重复执行指定次数命令(Ctrl+C终止,无参数帮助)"
-    cecho "  CALC <表达式>                 整数计算器 ⤸"
-    cecho "  -(无参数交互模式,-h/--help帮助,不是整数就死)"
-    cecho "  AWKC <表达式>                 AWK计算器 ⤸"
-    cecho "  -(无参数交互模式,-h/--help帮助)"
-    cecho "  BC [-s 精度] <表达式>         任意精度计算器 ⤸"
-    cecho "  -(无参数交互模式,-h/--help帮助,Ctrl+C终止正在进行的计算)"
+    cecho "  HELP <OR> /?                  此命令列表"
+    cecho "  EXIT/EXIT15                   退出"
+    cecho "  EXIT9                         调用强制退出"
+    cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
     cecho "$CMD_delimiter"
     cecho "  SH <脚本路径> [参数] ⤸"
     cecho "  -在此脚本内执行外部 SHELL 脚本(Ctrl+C终止目标脚本)"
@@ -717,11 +794,6 @@ cmd_help() {
     cecho "  RUNNING <包名>         启动应用程序  *需要权限*"
     cecho "  KILL [-9 (强制终止)/-15 (正常终止)/-2 (中断)] <PID> ⤸"
     cecho "  -终止指定进程(无权限时只能终止此脚本内进程)"
-    echo ""
-    cecho "  HELP <OR> /?                  此命令列表"
-    cecho "  EXIT/EXIT15                   退出"
-    cecho "  EXIT9                         调用强制退出"
-    cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
     cecho "$CMD_delimiter"
     echo ""
 }
@@ -849,46 +921,6 @@ cmd_yes() {
         cecho -c 36 "[YES YES YES/YYY]"
         return 130
     fi
-}
-
-cmd_hack() {
-    local target="$*"
-    if [[ -z "$target" ]]; then
-        err "用法: HACK <目标>"
-        return 1
-    fi
-
-    cmd_cls_no_title
-    local temp=""
-    local charset="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\]^_\`{|}~ "
-
-    # 本地 trap 捕获 Ctrl+C
-    local old_trap=$(trap -p INT)
-    local interrupted=0
-    trap 'interrupted=1' INT
-
-    for (( i=0; i<${#target}; i++ )); do
-        if [ $interrupted -eq 1 ]; then break; fi
-        local ch="${target:$i:1}"
-        for (( j=0; j<${#charset}; j++ )); do
-            if [ $interrupted -eq 1 ]; then break; fi
-            local try="${charset:$j:1}"
-            printf "%s%s\n" "$temp" "$try"
-            sleep 0.00001
-            if [[ "$try" == "$ch" ]]; then
-                temp+="$ch"
-                break
-            fi
-        done
-    done
-    echo ""
-
-    eval "$old_trap" 2>/dev/null
-    if [ $interrupted -eq 1 ]; then
-        cecho "HACK 被中断"
-        return 130
-    fi
-    return 0
 }
 
 cmd_echo() {
@@ -1023,69 +1055,6 @@ cecho "-h, --help      显示本帮助"
 
     # 调用底层函数执行输出
     _cprint "${call_args[@]}"
-}
-
-cmd_whoami_op() {
-    # ---------- 获取当前用户名 ----------
-    # 优先使用 $_WHOAMI, 失败则回退到 id -un, 最后显示 unknown
-    local user="$($_WHOAMI 2>/dev/null || id -un 2>/dev/null || echo 'unknown')"
-    local user_level=""
-
-    # ---------- 权限状态检测 ------------
-    # 1. ROOT 权限 
-    if [ "$(id -u 2>/dev/null)" = "0" ] || [ "$(whoami 2>/dev/null)" = "root" ]; then
-        user_level="ROOT用户"
-    else
-        # 2. Shizuku 环境(shell 用户 + app_process + shizuku)
-        # 适配不同 Android 版本的 ps, 使用 $_PS 和 $_GREP
-        local shizuku_detected=0
-        if $_PS -A -o user,args 2>/dev/null | $_GREP -v grep | $_GREP -qE '^shell.*shizuku' 2>/dev/null; then
-            shizuku_detected=1
-        elif $_PS -e -o user,args 2>/dev/null | $_GREP -v grep | $_GREP -qE '^shell.*shizuku' 2>/dev/null; then
-            shizuku_detected=1
-        elif $_PS 2>/dev/null | $_GREP -v grep | $_GREP -qE 'shell.*shizuku' 2>/dev/null; then
-            shizuku_detected=1
-        fi
-
-        if [ $shizuku_detected -eq 1 ]; then
-            user_level="ADB调试 (Shizuku激活)"
-        else
-            # 3. 常规 ADB 调试环境
-            local is_adb=0
-            local tcp_port=""
-
-            # 3.1 环境变量或父进程(最直接)
-            if [ -n "$ADB_SHELL" ] || [ -n "$ASH_STARTED" ] || \
-               (echo "$PPID" | xargs ps -o comm= 2>/dev/null | $_GREP -qi 'adbd'); then
-                is_adb=1
-            fi
-
-            # 3.2 补充: 系统属性(用于显示端口信息, 但不作为唯一判断依据)
-            local prop_tcpport=$(getprop service.adb.tcp.port 2>/dev/null)
-            local prop_state=$(getprop init.svc.adbd 2>/dev/null)
-            if [ "$prop_state" = "running" ]; then
-                is_adb=1
-            fi
-            if [ -n "$prop_tcpport" ] && [ "$prop_tcpport" -gt 0 ] 2>/dev/null; then
-                is_adb=1
-                tcp_port="$prop_tcpport"
-            fi
-
-            # 4. 综合判断
-            if [ $is_adb -eq 1 ]; then
-                user_level="ADB调试"
-                if [ -n "$tcp_port" ]; then
-                    user_level="ADB调试 (网络调试已开启, 端口:$tcp_port)"
-                fi
-            else
-                user_level="普通用户"
-            fi
-        fi
-    fi
-
-    # ---------- 统一输出 ----------
-    cecho "当前用户: $user"
-    cecho "当前权限状态: $user_level"
 }
 
 cmd_du() {
@@ -1299,7 +1268,6 @@ cmd_md() {
     done
 }
 
-# TOUCH:创建空文件或更新时间戳
 cmd_touch() {
     [ $# -ne 1 ] && { err "用法: TOUCH/NEW 文件名"; return 1; }
 
@@ -1682,16 +1650,6 @@ cmd_env() {
     esac
 }
 
-cmd_rand() {
-    if [ $# -eq 0 ]; then
-        cecho $RANDOM
-        echo ""
-    else
-        tr -dc '0-9' < /dev/urandom 2>/dev/null | head -c ${1:-4} | sed 's/^0*//' || cecho $RANDOM
-        echo ""
-    fi
-}
-
 cmd_watch() {
     if [ $# -lt 2 ]; then
         err "用法: WATCH <秒数> <命令> [参数]"
@@ -1894,126 +1852,6 @@ cmd_running() {
     fi
 
     err "无法启动 $pkg"
-}
-
-# ---------- RES 显示屏幕分辨率和DPI ----------
-cmd_res() {
-    local width="未知"
-    local height="未知"
-    local dpi="未知"
-
-    # 方法1: 使用 wm 命令 (Android 原生)
-    if command -v wm >/dev/null 2>&1; then
-        local size_output=$(wm size 2>/dev/null)
-        if [ -n "$size_output" ]; then
-            local size=$(echo "$size_output" | awk '{print $NF}')
-            if [[ "$size" =~ ^([0-9]+)x([0-9]+)$ ]]; then
-                width="${BASH_REMATCH[1]}"
-                height="${BASH_REMATCH[2]}"
-            fi
-        fi
-
-        local density_output=$(wm density 2>/dev/null)
-        if [ -n "$density_output" ]; then
-            dpi=$(echo "$density_output" | awk '{print $NF}')
-            [ -n "$dpi" ] && [ "$dpi" != "Physical" ] || dpi="未知"
-        fi
-    fi
-
-    # 方法2: 如果 wm 未获取到,尝试 getprop
-    if [ "$width" = "未知" ] || [ "$height" = "未知" ]; then
-        local prop_size=$(getprop ro.display.size 2>/dev/null)
-        if [ -n "$prop_size" ]; then
-            width=$(echo "$prop_size" | cut -d'x' -f1)
-            height=$(echo "$prop_size" | cut -d'x' -f2)
-        else
-            local w=$(getprop ro.sf.lcd_width 2>/dev/null)
-            local h=$(getprop ro.sf.lcd_height 2>/dev/null)
-            [ -n "$w" ] && width="$w"
-            [ -n "$h" ] && height="$h"
-        fi
-    fi
-
-    # DPI 若未获取,从 getprop 读取
-    if [ "$dpi" = "未知" ]; then
-        local dpi_prop=$(getprop ro.sf.lcd_density 2>/dev/null)
-        [ -n "$dpi_prop" ] && dpi="$dpi_prop"
-    fi
-
-    # 方法3: 如果以上都失败,尝试 /sys/class/graphics/fb0/virtual_size
-    if [ "$width" = "未知" ] || [ "$height" = "未知" ]; then
-        if [ -r "/sys/class/graphics/fb0/virtual_size" ]; then
-            local fb_size=$($_CAT /sys/class/graphics/fb0/virtual_size 2>/dev/null)
-            if [[ "$fb_size" =~ ^([0-9]+),([0-9]+)$ ]]; then
-                width="${BASH_REMATCH[1]}"
-                height="${BASH_REMATCH[2]}"
-            fi
-        fi
-    fi
-
-    # 输出结果
-    cecho "屏幕分辨率: ${width} x ${height}"
-    cecho "屏幕 DPI:    ${dpi}"
-}
-
-# ---------- BATT 读取电池信息 ----------
-cmd_batt() {
-    local batt_dir="/sys/class/power_supply/battery"
-    if [ ! -d "$batt_dir" ]; then
-        err "电池信息目录不存在: $batt_dir"
-        return 1
-    fi
-
-    local capacity="未知"
-    local temp="未知"
-    local voltage="未知"
-    local status="未知"
-
-    # 电量
-    if [ -r "$batt_dir/capacity" ]; then
-        capacity=$($_CAT "$batt_dir/capacity" 2>/dev/null | tr -d '\n\r')
-        [ -n "$capacity" ] && capacity="${capacity}%"
-    fi
-
-    # 温度 (单位 0.1°C)
-    if [ -r "$batt_dir/temp" ]; then
-        local temp_raw=$($_CAT "$batt_dir/temp" 2>/dev/null | tr -d '\n\r')
-        if [ -n "$temp_raw" ]; then
-            # 若温度值大于1000,可能是已乘以10的数值,否则直接显示
-            if [ "$temp_raw" -gt 1000 ] 2>/dev/null; then
-                temp=$(echo "scale=1; $temp_raw / 10" | bc 2>/dev/null || echo "$temp_raw")
-                temp="${temp}°C"
-            else
-                temp="${temp_raw}°C"
-            fi
-        fi
-    fi
-
-    # 电压 (微伏)
-    if [ -r "$batt_dir/voltage_now" ]; then
-        local volt_raw=$($_CAT "$batt_dir/voltage_now" 2>/dev/null | tr -d '\n\r')
-        if [ -n "$volt_raw" ]; then
-            # 若大于1000000 可能是微伏,转换为伏特
-            if [ "$volt_raw" -gt 1000000 ] 2>/dev/null; then
-                voltage=$(echo "scale=2; $volt_raw / 1000000" | bc 2>/dev/null || echo "$volt_raw")
-                voltage="${voltage}V"
-            else
-                voltage="${volt_raw}V"
-            fi
-        fi
-    fi
-
-    # 状态
-    if [ -r "$batt_dir/status" ]; then
-        status=$($_CAT "$batt_dir/status" 2>/dev/null | tr -d '\n\r')
-        [ -z "$status" ] && status="未知"
-    fi
-
-    # 输出
-    cecho "电池电量:    $capacity"
-    cecho "电池温度:    $temp"
-    cecho "电池电压:    $voltage"
-    cecho "充电状态:    $status"
 }
 
 cmd_systeminfo() {
@@ -2604,7 +2442,7 @@ cmd_calc() {
         return 0
     fi
 
-    # 交互模式：无参数
+    # 交互模式: 无参数
     if [ $# -eq 0 ]; then
         cecho "(CALC/EXIT 退出)"
         while true; do
@@ -2643,72 +2481,6 @@ cmd_calc() {
         err "计算错误: 表达式无效 (仅支持整数四则运算、括号、取模等)"
         return 1
     fi
-}
-
-cmd_color() {
-    if [ $# -eq 0 ]; then
-        {
-            cecho -b "设置控制台默认前景和背景色"
-            cecho "COLOR -def            恢复默认颜色(黑底亮白)"
-            cecho "COLOR [背景][前景]    设置颜色,如 COLOR 0A"
-            echo ""
-            cecho -b "颜色代码: "
-            cecho "   0 = 黑色       8 = 灰色"
-            cecho "   1 = 蓝色       9 = 淡蓝"
-            cecho "   2 = 绿色       A = 淡绿"
-            cecho "   3 = 青色       B = 淡青"
-            cecho "   4 = 红色       C = 淡红"
-            cecho "   5 = 紫色       D = 淡紫"
-            cecho "   6 = 黄色       E = 淡黄"
-            cecho "   7 = 白色       F = 亮白"
-            echo ""
-            cecho "示例: COLOR 0A    黑色背景亮绿前景"
-        }
-        return 0
-    fi
-
-    if [ "$1" = "-def" ]; then
-        BG=40
-        FG=97
-        save_config
-        cecho "颜色已重置为默认值"
-        return 0
-    fi
-
-    if [ $# -gt 1 ]; then
-        err "参数数量错误用法: COLOR [背景][前景] 或 COLOR -def 恢复默认"
-        return 1
-    fi
-
-    local arg=$(echo "$1" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
-    
-    if [ ${#arg} -ne 2 ]; then
-        err "无效颜色参数使用 COLOR 无参数查看帮助"
-        return 1
-    fi
-
-    local bg_char=$(echo "$arg" | cut -c1)
-    local fg_char=$(echo "$arg" | cut -c2)
-
-    case $bg_char in
-        0) BG=40;;   1) BG=44;;   2) BG=42;;   3) BG=46;;
-        4) BG=41;;   5) BG=45;;   6) BG=43;;   7) BG=47;;
-        8) BG=100;;  9) BG=104;;  A) BG=102;;  B) BG=106;;
-        C) BG=101;;  D) BG=105;;  E) BG=103;;  F) BG=107;;
-        *) err "无效背景颜色代码 '$bg_char'使用 COLOR 无参数查看帮助"; return 1;;
-    esac
-
-    case $fg_char in
-        0) FG=30;;   1) FG=34;;   2) FG=32;;   3) FG=36;;
-        4) FG=31;;   5) FG=35;;   6) FG=33;;   7) FG=37;;
-        8) FG=90;;   9) FG=94;;   A) FG=92;;   B) FG=96;;
-        C) FG=91;;   D) FG=95;;   E) FG=93;;   F) FG=97;;
-        *) err "无效前景颜色代码 '$fg_char'使用 COLOR 无参数查看帮助"; return 1;;
-    esac
-
-    cecho "颜色已设置为背景[$bg_char]前景[$fg_char]"
-    save_config
-    return 0
 }
 
 # ---------- ADB 命令 ----------
@@ -2992,6 +2764,8 @@ err "#以下显示的是debug命令:"
 cecho "debug___/debug_help_/help_debug_ -ME"
 cecho "debug_0/debug_priv_level <root/adb/normal/[空]> -更改我认为的你的权限"
 cecho "debug_1/debug_exit <退出码> -以任意退出码退出"
+cecho "debug_2/debug_load/cmd_resource load -debug -查看隐藏资源(默认屏蔽调试和laugh命令)"
+cecho "debug_3/debug_line -统计行数"
 cecho "$CMD_delimiter"
 err "#以下显示的是\$iamvar命令"
 cecho "114514/1145141919810 -error stink"
@@ -2999,7 +2773,9 @@ cecho "100/dev100/dev_build_0.100 -正如名字所说"
 cecho "yesyesyes/yyy/yy/yesyes -YES YES YES!!!"
 cecho "command not found/commandnotfound -command not found!!!"
 err "cmd_bomb_fork -炸弹,将会导致设备死机!!!"
-cecho "$CMD_delimiter / $CMD_RUNNING_Err_title -无意义"
+cecho "$CMD_delimiter/CMD_delimiter -无意义"
+cecho "wtf -wtffffffff"
+cecho "wtf2 -wtffffffff"
 cecho "$CMD_delimiter"
 }
 debug_0() {
@@ -3030,6 +2806,39 @@ debug_1() {
         return 1
     fi
     exit "$code"
+}
+debug_3() {
+    # 主程序
+    local main_lines=$(wc -l < "$0" 2>/dev/null)
+    [[ -z "$main_lines" ]] && main_lines=0
+    local main_bytes=$(wc -c < "$0" 2>/dev/null)
+    [[ -z "$main_bytes" ]] && main_bytes=0
+
+    # 统计 resource 目录
+    local res_total=0
+    local res_bytes=0
+    local file_count=0
+    if [[ -d "$RESOURCE_DIR" ]]; then
+        while IFS= read -r -d '' file; do
+            local lines=$(wc -l < "$file" 2>/dev/null)
+            if [[ $? -eq 0 ]]; then
+                res_total=$((res_total + lines))
+                ((file_count++))
+                # 增加字节数统计
+                local bytes=$(wc -c < "$file" 2>/dev/null)
+                [[ -n "$bytes" ]] && res_bytes=$((res_bytes + bytes))
+            fi
+        done < <(find "$RESOURCE_DIR" -type f -name "*.bash" -print0 2>/dev/null)
+    fi
+
+    cecho -b "--- 代码统计 ---"
+    cecho "主程序 ($(basename "$0")): $main_lines 行, $main_bytes 字节"
+    if [[ $file_count -gt 0 ]]; then
+        cecho "资源目录 (共 $file_count 个 .bash 文件): $res_total 行, $res_bytes 字节"
+    else
+        err "资源目录未发现bash文件"
+    fi
+    cecho -b "总行数: $((main_lines + res_total))  总字节数: $((main_bytes + res_bytes))"
 }
 # ---------- 主逻辑 ---------
 # 标题
@@ -3196,7 +3005,7 @@ case "$cmd" in
     crc32)          cmd_crc32 "${args_array[@]}" ;;
     psd|passgen)    cmd_psd "${args_array[@]}" ;;
     rand)           cmd_rand "${args_array[@]}" ;;
-    # ---------- 控制台 ----------
+    # ---------- 控制台/杂项 ----------
     help|/? )       cmd_help ;;
     cls|clear|clean) cmd_cls ;;
     clsnt|clearnt|cleannt) cmd_cls_no_title ;;
@@ -3210,6 +3019,7 @@ case "$cmd" in
     err)            err "${args_array[*]}" ;;
     yes)            cmd_yes "${args_array[@]}" ;;
     hack)           cmd_hack "${args_array[@]}" ;;
+    hack2)          cmd_hack2 "${args_array[@]}" ;;
     sleep)          cmd_sleep "${args_array[@]}" ;;
     timer)          cmd_timer "${args_array[@]}" ;;
     calc)           cmd_calc "${args_array[@]}" ;;
@@ -3221,18 +3031,20 @@ case "$cmd" in
     exit|exit15)    cmd_exit15 ;;
     exit9)          cmd_exit9 ;;
     "ctrl+c"|"<ctrl+c>") cmd_exit15_0 ;;
-    # ---------- 高级 ----------
     sh)             cmd_sh "${args_array[@]}" ;;
     c|cmd)              cmd_cmd "${args_array[@]}" ;;
     adb)            cmd_adb "${args_array[@]}" ;;
     running)        cmd_running "${args_array[@]}" ;;
     kill)           cmd_kill "${args_array[@]}" ;;
     # ---------- debug ----------
+    debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug) err "调试模式还在设计中(真的吗?)" ;;
     debug___|debug_help_|help_debug_)     debug_help ;;
     debug_priv_level|debug_0) debug_0 "${args_array[@]}" ;;
     debug_exit|debug_1) debug_1 "${args_array[@]}" ;;
+    debug_load|debug_2)   cmd_resource load -debug ;;
+    debug_line|debug_3)    debug_3 ;;
     # ---------- laugh ----------
-    $CMD_delimiter|$CMD_RUNNING_Err_title)   cecho "bro 复制这个何意味?" ;;
+    $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
     commandnotfound)      cmd_laugh_command_not_found ;;
     command)        cmd_laugh_command_not_found "${args_array[@]}" ;;
     114514|1145141919810) cmd_laugh_114514 ;;
@@ -3240,6 +3052,7 @@ case "$cmd" in
     yesyesyes|yyy|yy|yesyes) cmd_laugh_yyy ;;
     cmd_bomb_fork|cmd_bomb_fork.bash)    cmd_bomb_fork ;; #危险指令!
     wtf)  cmd_laugh_wtf ;;
+    wtf2) cmd_laugh_wtf2 ;;
 
     *)              err "未知命令 \"$cmd\", 请使用 HELP 或 /? 来查看命令列表" ;;
 esac
