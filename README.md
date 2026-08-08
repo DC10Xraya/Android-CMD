@@ -40,7 +40,7 @@ bash CMD_main_dev.bash
 ---------
 基础环境为 Bash 4.0+, 必须预装:
 ```txt
-Awk, Grep, Sed, Cat, Cut, Head, Tail, More, BC
+Awk, Grep, Sed, Cat, Cut, Head, Tail, BC
 ```
 缺失以上依赖无法启动脚本
 其他的依赖缺失可能导致部分命令无法使用
