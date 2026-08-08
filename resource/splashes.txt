@@ -1,14 +1,13 @@
 Hello World
 So ezzzzzzz
 Made with Bash and bad decisions.
-dev_build?
-laugh command:5
+try laugh command
 [System]:You will play egg
 1145141919810
 Also try Minecraft!
 Also try cmd.exe on Windows!
 这不是bash函数.mcfunction
-cmd_what () {}
+cmd_Iamfunction () {}
 null
 <splashes.txt>
 This is from minecraft
@@ -27,12 +26,11 @@ YES YES YES?
 野兽先辈的命令臭死符 [版本:114514.1919810]
 echo "Hello World"#问:这段代码的输出是什么?
 lang:简体中文(其他的我没做)
-Bash VS <空格>
+Bash VS  
 Bash VS Brainfuck
-收到来自localhost的回复:你要是再ping我,我就揍你
+来自 127.0.0.1 的回复: 数据=不要再Ping了
 Try listen 《title.wma》
 #!/bin/bash
-神秘小符号: ⤸
 Let's go～
 hey yo chillllllllllll！
 2001-10-25 00:00:00
@@ -41,4 +39,10 @@ wtf2
 调试模式还在设计中(真的吗?)
 debug?
 color 0a
-<莫名其妙的更新>
+<莫名其妙>
+Lazy,lazy,lazy!
+Please Enter text
+Do you know?I don't know!
+ABCD egg hunt(wha)
+I WILL DEL YOUR /data
+禁止使用中文标点符号(
