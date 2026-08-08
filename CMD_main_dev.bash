@@ -26,23 +26,15 @@ fi
 
 #必须工具
 MISSING=""
-for cmd in awk grep sed cat cut head tail; do
+for cmd in awk grep sed cat cut head tail bc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         MISSING="$MISSING $cmd"
     fi
 done
 if [ -n "$MISSING" ]; then
     err "$CMD_RUNNING_Err_title"
-    err "缺少以下核心命令: $MISSING"
-    err "请安装对应的软件包"
-    exit 127
-fi
-
-#BC
-if ! command -v bc >/dev/null 2>&1; then
-    err "$CMD_RUNNING_Err_title"
-    err "需要BC计算器支持但未检测到BC命令存在"
-    err "请安装BC或确保 busybox 包含BC命令"
+    err "缺少以下必须命令: $MISSING"
+    err "请安装对应的软件包, 否则无法启动"
     exit 127
 fi
 
