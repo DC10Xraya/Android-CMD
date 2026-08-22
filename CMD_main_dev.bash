@@ -1136,7 +1136,6 @@ $CMD_delimiter
   YES [内容]              刷屏某一内容直至按下Ctrl+C
   HACK <目标>             穷举可打印字符直到找到目标
   HACK2 <目标>            同上,但是使用二分法
-  CALC <表达式>/<无参数进入交互>           整数计算器
   AWKC <表达式>/<无参数进入交互>           AWK计算器
   BC [-s 精度] <表达式>/<无参数进入交互>   任意精度计算器
   TIMER [秒数]/[时间戳]   倒计时/闹钟
@@ -2910,7 +2909,6 @@ while true; do
     err)               err "${args_array[*]}" ;;
     yes)               cmd_yes "${args_array[@]}" ;;
     sleep)             cmd_sleep "${args_array[@]}" ;;
-    calc)              cmd_calc "${args_array[@]}" ;;
     awkc)              cmd_awkc "${args_array[@]}" ;;
     bc)                cmd_bc "${args_array[@]}" ;;
     watch)             cmd_watch "${args_array[@]}" ;;
