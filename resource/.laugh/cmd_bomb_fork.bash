@@ -94,7 +94,7 @@ cmd_bomb_fork() {
     echo ""
     cecho "$CMD_delimiter"
     err "![引爆须知/非常重要]!"
-    err "如果你真的想引爆这个炸弹,请进入该函数(resource/.laugh/danger/cmd_bomb_fork.bash)的对应位置,将137行的注释(开头的#)移除"
+    err "如果你真的想引爆这个炸弹,请进入该函数(resource/.laugh/danger/cmd_bomb_fork.bash)的对应位置,将139行的注释(开头的#)移除"
     err "(即使你不想引爆,若继续往下执行,也必须查看是否安全)"
     err "(如果你这么做了即代表你已经同意作者不承担任何设备损坏或数据丢失的责任!!!)"
     if ! confirm "确认阅读了吗?"; then
@@ -134,11 +134,16 @@ cmd_bomb_fork() {
     if [ "$skip_bomb" -eq 1 ]; then
         cecho "流程已完毕"
     else
+        local ORIG_ULIMIT="$(ulimit -u 2>/dev/null)"
+        ulimit -u 44173
         #sh -c ':(){ :|:& };:'
         #如果你真的想要,移除上面的注释,你已经被警告过了
         sleep 5
+        if [ -n "$ORIG_ULIMIT" ]; then
+            ulimit -u "$ORIG_ULIMIT" 2>/dev/null || true
+        fi
         cecho "如果输出这条,说明炸弹还处于注释状态,没有引爆"
-        cecho "如果你真的想引爆这个炸弹,请进入该函数(resource/.laugh/danger/cmd_bomb_fork.bash)的对应位置,将137行的注释(开头的#)移除"
+        cecho "如果你真的想引爆这个炸弹,请进入该函数(resource/.laugh/danger/cmd_bomb_fork.bash)的对应位置,将139行的注释(开头的#)移除"
         err "(如果你这么做了即代表你已经同意作者不承担任何设备损坏或数据丢失的责任!!!)"
     fi
 
