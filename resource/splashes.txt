@@ -1,14 +1,14 @@
-Hello World
+§92Hello World
 So ezzzzzzz
 Made with Bash and bad decisions.
 try laugh command
-[System]:You will play egg
-1145141919810
-Also try Minecraft!
+§36[System]:You will play egg
+§331145141919810
+§92Also try Minecraft!
 Also try cmd.exe on Windows!
 这不是bash函数.mcfunction
 cmd_Iamfunction () {}
-null
+§31null
 <splashes.txt>
 This is from minecraft
 command not found
