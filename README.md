@@ -57,5 +57,4 @@ MIT License
 
 Copyright (c) 2026 DC10Xray
 
-![QQ](https://img.shields.io/badge/QQ-3896444757-blue?logo=tencent-qq&logoColor=white)
 [![Email](https://img.shields.io/badge/Email-3896444757@qq.com-brightgreen?logo=gmail&logoColor=white)](mailto:3896444757@qq.com)
