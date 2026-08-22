@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.10 (dev0.230)"
+CMD_VER="0.11 (dev0.230)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -2778,7 +2778,7 @@ cmd_update() {
             $CMD_GITHUB_Link
         else
             cecho -c 96 "新版本: $remote_ver($tag_name) 当前: [$current_ver]"
-            [ -n "$published_at" ] && cecho -c 90 "发布时间: $published_at"
+            [ -n "$published_at" ] && cecho -c 90 "发布时间(UTC): $published_at"
             $CMD_GITHUB_Link
         fi
     else
@@ -2810,7 +2810,7 @@ while true; do
     
     # 显示更新提示(仅检查5次)
     if [ $_update_prompted -eq 0 ] && [ $_update_check_count -lt 5 ]; then
-    if [ -f "$_update_cache" ]; then
+    if [ -f "$_update_cache" ] && [ -s "$_update_cache" ]; then
         new_tag=$(cat "$_update_cache")
         new_ver=$(_extract_ver "$new_tag")
         cur_ver=$(_extract_ver "$CMD_VER")
