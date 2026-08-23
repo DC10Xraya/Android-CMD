@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.12 (dev0.234)"
+CMD_VER="0.13 (dev0.237)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -1083,6 +1083,7 @@ $CMD_delimiter
   DU [目录]                 列出目录大小
   SIZE [文件]               列出文件大小
   STAT <文件>               显示文件的详细信息
+  WC [选项] [文件]          统计行数、单词数、字符数
   LN -s <源> <目标>         创建软链接(符号链接)
   TREE [选项] [路径]        显示目录树
   TYPE [文件]               查看文本文件
@@ -1103,7 +1104,7 @@ $CMD_delimiter
   UPTIME          系统运行时间
   RES/WM          显示屏幕相关信息(WM详细,RES兼容)
   BATT            显示电池信息
-  SYSTEMINFO      一些系统信息
+  SYSTEMINFO      系统信息
   TL/TASKLIST     进程列表
   TM/TOP/TASKMGR  任务管理器
   TEMP            显示温度传感器、温度墙和温控状态
@@ -1127,7 +1128,7 @@ $CMD_delimiter
   DOWNLOAD <URL> <本地路径> 下载网络文件到本地
   ST/SPEEDTEST [-u URL] [-t 超时] ⤸
   -网络测速(默认 Cloudflare 10MB,注意流量消耗)
-  MCMODDOWNLOAD    从Modrinth下载MC JAVA模组
+  MCMODDOWNLOAD     从Modrinth下载MC JAVA模组
 
 //cecho -b "编解码与校验"
   BASE64/B64 -d <字符串>/[-d] -f <文件>  Base64编码/解码
@@ -1135,6 +1136,7 @@ $CMD_delimiter
   SHA1 -d <字符串>/-f <文件>             计算文件的SHA1
   MD5 <文件>                计算文件的MD5
   CRC32 <文件>              计算文件的CRC32(cksum)
+  DIFF [选项] <1> <2>       比较两个文件/目录的差异
   PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集] ⤸
   -生成符合要求的随机密码
   RAND [长度]               生成随机数(默认四位数)
@@ -1153,6 +1155,8 @@ $CMD_delimiter
   SLEEP <秒数>            睡眠指定时间
   WATCH <秒数> <命令> [参数]    每隔指定时间清除屏幕并运行命令
   REPEAT <次数> <命令> [参数]   重复执行指定次数命令
+  CMDTIME <命令> [参数]         测量命令执行耗时
+  MCSERVER                      模拟运行MC服务器
 //cecho -b "控制台"
   CLS/CLEAR              清除屏幕(-n无标题/-r/-y有)
   CLSD/CLEARD            设置清除屏幕默认行为
@@ -1967,7 +1971,7 @@ cmd_watch() {
         cecho "示例: WATCH 2 cmd_systeminfo"
         cecho "      WATCH 5 ls -l /sdcard"
         cecho "提示: 通过<内部命令名称>运行此脚本内置命令"
-        cecho "按Ctrl+C随时退出"
+        cecho "按Ctrl+C中断"
         return 0
     fi
 
@@ -1976,7 +1980,7 @@ cmd_watch() {
         cecho "示例: WATCH 2 systeminfo"
         cecho "      WATCH 5 ls -l /sdcard"
         cecho "提示: 通过<内部命令名称>运行此脚本内置命令"
-        cecho "按Ctrl+C随时退出"
+        cecho "按Ctrl+C随时中断"
         return 1
     fi
 
@@ -2036,7 +2040,7 @@ cmd_repeat() {
         cecho -b "用法: REPEAT <次数> <命令> [参数]"
         cecho "示例: REPEAT 100 echo Hello World"
         cecho "      REPEAT 3 ls -l"
-        cecho "按 Ctrl+C 可提前终止"
+        cecho "按Ctrl+C中断"
         return 0
     fi
 
@@ -2044,7 +2048,7 @@ cmd_repeat() {
         err "用法: REPEAT <次数> <命令> [参数]"
         cecho "示例: REPEAT 100 echo Hello World"
         cecho "      REPEAT 3 ls -l"
-        cecho "按 Ctrl+C 可提前终止"
+        cecho "按Ctrl+C中断"
         return 1
     fi
 
@@ -2090,6 +2094,44 @@ cmd_repeat() {
     else
         cecho "REPEAT 完成 (共执行 $count 次)"
         return 0
+    fi
+}
+
+cmd_cmdtime() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -eq 0 ]; then
+        cecho -b "用法: CMDTIME <命令> [参数]"
+        cecho "测量命令执行耗时"
+        cecho "示例: CMDTIME ls -l"
+        cecho "      CMDTIME sleep 2"
+        cecho "按Ctrl+C中断正在执行的命令"
+        return 0
+    fi
+
+    # 保存当前 SIGINT 陷阱, 然后让父进程忽略 SIGINT
+    local old_trap=$(trap -p INT)
+    trap '' INT
+
+    # 在子 shell 中执行 time, 并在子 shell 内恢复默认 SIGINT 处理
+    (
+        trap - INT
+        TIMEFORMAT=$'实际时间\t%E\n用户时间\t%U秒\n系统时间\t%S秒'
+        time "$@"
+    )
+    local exit_code=$?
+
+    # 恢复父进程原来的 SIGINT 陷阱
+    if [ -n "$old_trap" ]; then
+        eval "$old_trap"
+    else
+        trap - INT
+    fi
+
+    # 根据退出码提示中断
+    if [ $exit_code -eq 130 ]; then
+        echo ""
+        return 130
+    else
+        return $exit_code
     fi
 }
 
@@ -2170,44 +2212,58 @@ cmd_running() {
 }
 
 cmd_systeminfo() {
-    # ===== 基础信息 =====
+    # 基础信息
     local hostname=$($_HOSTNAME 2>/dev/null || $_CAT /proc/sys/kernel/hostname 2>/dev/null || echo 'unknown')
     local osver=$(getprop ro.build.version.release 2>/dev/null || echo '?')
     local sdkver=$(getprop ro.build.version.sdk 2>/dev/null || echo '?')
     local manuf=$(getprop ro.product.manufacturer 2>/dev/null || echo '?')
     local model=$(getprop ro.product.model 2>/dev/null || echo '?')
-    local cpu=$($_CAT /proc/cpuinfo 2>/dev/null | $_GREP -E 'Processor|Hardware' | $_HEAD -1 | $_CUT -d: -f2- | $_SED 's/^[ \t]*//')
-    [ -z "$cpu" ] && cpu="unknown"
     local kernel=$($_UNAME -r 2>/dev/null || echo 'unknown')
 
-    # ===== CPU核心数 =====
+    # CPU 型号 (从 /proc/cpuinfo)
+    local cpu_model=$($_CAT /proc/cpuinfo 2>/dev/null | $_GREP -E 'Processor|Hardware' | $_HEAD -1 | $_CUT -d: -f2- | $_SED 's/^[ \t]*//')
+    [ -z "$cpu_model" ] && cpu_model="unknown"
+
+    # CPU 核心数
     local cpu_cores=$($_GREP -c '^processor' /proc/cpuinfo 2>/dev/null)
     [ -z "$cpu_cores" ] && cpu_cores="未知"
 
-    # ===== 内存信息 =====
-    local mem_total_kb=$($_CAT /proc/meminfo 2>/dev/null | $_GREP 'MemTotal' | $_AWK '{print $2}')
-    local mem_avail_kb=$($_CAT /proc/meminfo 2>/dev/null | $_GREP 'MemAvailable' | $_AWK '{print $2}')
-    local mem_used_kb=""
-    local mem_percent=""
-    local mem_total_display="未知"
-    local mem_avail_display="未知"
-    local mem_used_display="未知"
+    # 每个核心的当前频率
+    local freq_info=""
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*/cpufreq; do
+        if [ -r "$cpu_dir/scaling_cur_freq" ]; then
+            core=$(basename $(dirname "$cpu_dir"))
+            freq=$($_CAT "$cpu_dir/scaling_cur_freq" 2>/dev/null | awk '{printf "%.1f MHz", $1/1000}')
+            freq_info="${freq_info}${core}: ${freq}  "
+        fi
+    done
+    [ -z "$freq_info" ] && freq_info="无法获取频率"
 
-    if [ -n "$mem_total_kb" ] && [ -n "$mem_avail_kb" ]; then
-        mem_used_kb=$((mem_total_kb - mem_avail_kb))
-        mem_percent=$(( (mem_used_kb * 100) / mem_total_kb ))
-        mem_total_display="${mem_total_kb} kB"
-        mem_avail_display="${mem_avail_kb} kB"
-        mem_used_display="${mem_used_kb} kB"
-    else
-        mem_percent="?"
-    fi
+    # 内存详情 (从 /proc/meminfo)
+    local mem_total_kb=$($_GREP '^MemTotal:' /proc/meminfo | $_AWK '{print $2}')
+    local mem_free_kb=$($_GREP '^MemFree:' /proc/meminfo | $_AWK '{print $2}')
+    local mem_buffers_kb=$($_GREP '^Buffers:' /proc/meminfo | $_AWK '{print $2}')
+    local mem_cached_kb=$($_GREP '^Cached:' /proc/meminfo | $_AWK '{print $2}')
+    local mem_avail_kb=$($_GREP '^MemAvailable:' /proc/meminfo | $_AWK '{print $2}')
+    local swap_total_kb=$($_GREP '^SwapTotal:' /proc/meminfo | $_AWK '{print $2}')
+    local swap_free_kb=$($_GREP '^SwapFree:' /proc/meminfo | $_AWK '{print $2}')
 
-    # ===== 运行时间 & 负载 =====
-    local uptime_raw=$(uptime 2>/dev/null)
-    [ -z "$uptime_raw" ] && uptime_raw="无法获取"
+    [ -z "$mem_total_kb" ] && mem_total_kb=0
+    [ -z "$mem_free_kb" ] && mem_free_kb=0
+    [ -z "$mem_buffers_kb" ] && mem_buffers_kb=0
+    [ -z "$mem_cached_kb" ] && mem_cached_kb=0
+    [ -z "$mem_avail_kb" ] && mem_avail_kb=$mem_free_kb
+    [ -z "$swap_total_kb" ] && swap_total_kb=0
+    [ -z "$swap_free_kb" ] && swap_free_kb=0
 
-    # ===== 温度传感器 =====
+    local mem_used_kb=$((mem_total_kb - mem_avail_kb))
+    [ $mem_used_kb -lt 0 ] && mem_used_kb=0
+    local mem_percent=$(( (mem_used_kb * 100) / (mem_total_kb?mem_total_kb:1) ))
+    local swap_used_kb=$((swap_total_kb - swap_free_kb))
+    [ $swap_used_kb -lt 0 ] && swap_used_kb=0
+    local swap_percent=$(( (swap_used_kb * 100) / (swap_total_kb?swap_total_kb:1) ))
+
+    # ---------- 温度传感器 (修复变量声明) ----------
     local thermal_base="/sys/class/thermal"
     local cpu_sensor=""
     local gpu_sensor=""
@@ -2220,9 +2276,15 @@ cmd_systeminfo() {
             [ -r "$type_file" ] && [ -r "$temp_file" ] || continue
             local sensor_type=$($_CAT "$type_file" 2>/dev/null | tr -d '\n\r')
             case "$sensor_type" in
-                cpu-0-0|cpuss-0|cpu-0-1|cpuss-1|cpu-1-0) [ -z "$cpu_sensor" ] && cpu_sensor="$temp_file" ;;
-                gpuss-0|gpuss-1|gpu) [ -z "$gpu_sensor" ] && gpu_sensor="$temp_file" ;;
-                battery) battery_sensor="$temp_file" ;;
+                cpu-0-0|cpuss-0|cpu-0-1|cpuss-1|cpu-1-0)
+                    [ -z "$cpu_sensor" ] && cpu_sensor="$temp_file"
+                    ;;
+                gpuss-0|gpuss-1|gpu)
+                    [ -z "$gpu_sensor" ] && gpu_sensor="$temp_file"
+                    ;;
+                battery)
+                    [ -z "$battery_sensor" ] && battery_sensor="$temp_file"
+                    ;;
             esac
         done
     fi
@@ -2247,27 +2309,32 @@ cmd_systeminfo() {
     local gpu_temp=$(_get_temp "$gpu_sensor")
     local bat_temp=$(_get_temp "$battery_sensor")
 
-    # ===== 最终输出 =====
-    {
-        cecho -b "系统信息"
-        cecho "$CMD_delimiter"
-        cecho "主机名: $hostname"
-        cecho "系统版本: Linux(Android $osver, SDK $sdkver) (内核 $kernel)"
-        cecho "制造商: $manuf"
-        cecho "型号: $model"
-        cecho "处理器: $cpu"
-        cecho "CPU核心数: $cpu_cores"
-        cecho "$CMD_delimiter"
-        cecho "内存使用率: ${mem_percent}%"
-        cecho "总内存: $mem_total_display"
-        cecho "可用内存: $mem_avail_display"
-        cecho "已用内存: $mem_used_display"
-        cecho "$CMD_delimiter"
-        cecho "CPU温度: $cpu_temp    GPU温度: $gpu_temp    电池温度: $bat_temp"
-        cecho "$CMD_delimiter"
-        cecho "运行时间及负载: $uptime_raw"
-        cecho "$CMD_delimiter"
-    }
+    # 运行时间
+    local uptime_raw=$($_UPTIME 2>/dev/null || echo "无法获取")
+
+    # ---- 输出 ----
+    cecho -b "系统信息"
+    cecho "$CMD_delimiter"
+    cecho "主机名: $hostname"
+    cecho "系统: Android $osver (SDK $sdkver)  内核: $kernel"
+    cecho "制造商: $manuf  型号: $model"
+    cecho "CPU: $cpu_model"
+    cecho "核心数: $cpu_cores"
+    cecho "核心频率:"
+    cecho "$freq_info"
+    cecho "$CMD_delimiter"
+    cecho "内存使用率: ${mem_percent}%  已用: $((mem_used_kb/1024))MB / 总计: $((mem_total_kb/1024))MB"
+    cecho "  可用: $((mem_avail_kb/1024))MB  缓存: $((mem_buffers_kb/1024))MB  缓冲: $((mem_cached_kb/1024))MB"
+    if [ $swap_total_kb -gt 0 ]; then
+        cecho "Swap使用率: ${swap_percent}%  已用: $((swap_used_kb/1024))MB / 总计: $((swap_total_kb/1024))MB"
+    else
+        cecho "Swap: 未启用或无"
+    fi
+    cecho "$CMD_delimiter"
+    cecho "CPU温度: $cpu_temp    GPU温度: $gpu_temp    电池温度: $bat_temp"
+    cecho "$CMD_delimiter"
+    cecho "运行时间及负载: $uptime_raw"
+    cecho "$CMD_delimiter"
 }
 
 cmd_find() {
@@ -2281,6 +2348,93 @@ cmd_find() {
     fi
     local pattern="$1"; shift
     $_GREP "$pattern" "$@" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+}
+
+cmd_wc() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: WC [选项] [文件]"
+        cecho "统计行数、单词数、字符数"
+        cecho "选项: 与系统WC相同, 输出美化"
+        return 0
+    fi
+
+    # 如果参数中含有标准 wc 的短选项, 直接原样执行并输出
+    local has_short_opts=0
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^-[lwcmL] ]]; then
+            has_short_opts=1
+            break
+        fi
+    done
+
+    if [ $has_short_opts -eq 1 ]; then
+        # 直接调用系统 wc, 保留原始输出
+        wc "$@"
+        return $?
+    fi
+
+    # 无选项或仅有文件:美化输出
+    if [ $# -eq 0 ]; then
+        # 无文件, 从标准输入读取
+        local data=$(cat)
+        local lines=$(echo "$data" | wc -l)
+        local words=$(echo "$data" | wc -w)
+        local chars=$(echo "$data" | wc -c)
+        cecho "行数: $lines   单词数: $words   字符数: $chars"
+    else
+        # 有文件, 逐个显示
+        for file in "$@"; do
+            if [ ! -f "$file" ]; then
+                err "文件不存在: $file"
+                continue
+            fi
+            local lines=$(wc -l < "$file" 2>/dev/null)
+            local words=$(wc -w < "$file" 2>/dev/null)
+            local chars=$(wc -c < "$file" 2>/dev/null)
+            cecho "文件: $file"
+            cecho "  行数: $lines   单词数: $words   字符数: $chars"
+        done
+    fi
+}
+
+cmd_diff() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 2 ]; then
+        cecho -b "用法: DIFF [选项] <1> <2>"
+        cecho "比较两个文件/目录的差异"
+        return 0
+    fi
+
+    local output
+    output=$(diff "$@" 2>&1)
+    local ret=$?
+
+    if [ $ret -eq 0 ]; then
+        # 无差异
+        cecho -b "无差异"
+        return 0
+    elif [ $ret -eq 1 ]; then
+        # 有差异, 直接输出 diff 原始内容
+        cecho -b -c 33 "有差异:"
+        printf "%s\n" "$output"
+        return 1
+    else
+        # 错误处理:转换常见错误信息为中文
+        local errmsg="$output"
+        if [[ "$errmsg" =~ "No such file or directory" ]]; then
+            err "文件或目录不存在"
+        elif [[ "$errmsg" =~ "cannot stat" ]]; then
+            err "无法获取文件状态"
+        elif [[ "$errmsg" =~ "Permission denied" ]]; then
+            err "权限不足"
+        elif [[ "$errmsg" =~ "Is a directory" ]]; then
+            err "期望文件, 但为目录"
+        elif [[ "$errmsg" =~ "Not a directory" ]]; then
+            err "期望目录, 但为文件"
+        else
+            err "diff 错误: $errmsg"
+        fi
+        return $ret
+    fi
 }
 
 cmd_more() {
@@ -2406,7 +2560,7 @@ cmd_tree() {
                 child_prefix="${prefix}    "
             fi
 
-            # ========== 防循环：处理符号链接 ==========
+            # ========== 防循环:处理符号链接 ==========
             if [ -L "$full" ]; then
                 # 仅当非 -d 模式时显示, 用青色并加 @ 标记
                 if [ $show_dirs_only -eq 0 ]; then
