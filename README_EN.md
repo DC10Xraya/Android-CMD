@@ -11,7 +11,7 @@ Android CMD
 An interactive Bash script integrating common system administration, network, and system monitoring features (and jokes), specifically designed for Android.
 
 <details>
-<summary><b>Commands (91)</b></summary>
+<summary><h2>Command (91) Click to view</h2></summary>
   
 | Command | Description |
 | :--- | :--- |
@@ -155,4 +155,4 @@ License
 MIT License
 Copyright (c) 2026 DC10Xray
 
-https://img.shields.io/badge/Email-3896444757@qq.com-brightgreen?logo=gmail&logoColor=white
+[![Email](https://img.shields.io/badge/Email-3896444757%40qq.com-brightgreen?logo=gmail&logoColor=white)](mailto:3896444757@qq.com)
