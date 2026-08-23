@@ -11,7 +11,7 @@ Android CMD
 一个集成了常用运维, 网络与系统监控功能(还有笑话)的交互式 Bash 脚本,  专门在 Android 上运行
 
 <details>
-<summary><b>命令 (91)</b></summary>
+<summary><h2>命令 (91)</h2></summary>
   
 | 命令 | 描述 |
 | :--- | :--- |
