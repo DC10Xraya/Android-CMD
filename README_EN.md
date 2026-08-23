@@ -12,6 +12,8 @@ An interactive Bash script integrating common system administration, network, an
 
 <details>
 <summary><h2>Command (91) Click to view</h2></summary>
+
+Note: Excluding hidden (laugh) and debug commands.
   
 | Command | Description |
 | :--- | :--- |
