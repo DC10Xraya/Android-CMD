@@ -1,7 +1,7 @@
 **简体中文** | [English](README_EN.md)
 
 # Android CMD
-<p align="center">
+<p align="left">
   <img src="icon.png" alt="Android CMD" width="200">
 </p>
 
