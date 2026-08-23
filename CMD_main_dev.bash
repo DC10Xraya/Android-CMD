@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.11 (dev0.230)"
+CMD_VER="0.12 (dev0.234)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -38,6 +38,16 @@ if [ -n "$MISSING" ]; then
     err "请安装对应的软件包, 否则无法启动"
     exit 127
 fi
+
+
+# 至少需要 curl 或 wget 之一
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    err "$CMD_RUNNING_Err_title"
+    err "需要 curl 或 wget 中的至少一个, 但均未找到"
+    err "请安装 curl 或 wget, 否则一些下载功能受限"
+    exit 127
+fi
+
 
 echo -e "\033[32m---------------CMD Running---------------\033[0m"
 
@@ -268,7 +278,7 @@ ccat() {
         input_file="/dev/stdin"
     elif [ $# -eq 1 ]; then
         local user_path="$1"
-        # 如果已经是绝对路径，直接使用
+        # 如果已经是绝对路径, 直接使用
         if [[ "$user_path" = /* ]]; then
             input_file="$user_path"
         else
@@ -455,13 +465,13 @@ render_splash() {
                 fg="$code"
                 continue
             else
-                # 样式切换（b/i/u/s）或重置（r）
+                # 样式切换(b/i/u/s)或重置(r)
                 case "$next" in
                     b) ((bold = !bold)) ;;
                     i) ((italic = !italic)) ;;
                     u) ((underline = !underline)) ;;
                     s) ((strikethrough = !strikethrough)) ;;
-                    r)  # 重置为默认（无颜色、无样式）
+                    r)  # 重置为默认(无颜色、无样式)
                         bold=0; italic=0; underline=0; strikethrough=0; fg=""
                         ;;
                 esac
@@ -485,7 +495,7 @@ render_splash() {
         ((i++))
     done
 
-    # 末尾重置样式（避免影响后续输出）
+    # 末尾重置样式(避免影响后续输出)
     result+="\033[0m"
     printf "%b\n" "$result"
 }
@@ -615,7 +625,7 @@ fi
 # 二次确认
 confirm() {
     while true; do
-        printf "\033[1;33m%b[Y/N]: \033[0m" "$*"
+        printf "\033[1;33m%b[Y/n]: \033[0m" "$*"
         read -r answer
         case "$answer" in
             [Yy]) return 0 ;;
@@ -1117,6 +1127,7 @@ $CMD_delimiter
   DOWNLOAD <URL> <本地路径> 下载网络文件到本地
   ST/SPEEDTEST [-u URL] [-t 超时] ⤸
   -网络测速(默认 Cloudflare 10MB,注意流量消耗)
+  MCMODDOWNLOAD    从Modrinth下载MC JAVA模组
 
 //cecho -b "编解码与校验"
   BASE64/B64 -d <字符串>/[-d] -f <文件>  Base64编码/解码
@@ -2289,12 +2300,14 @@ cmd_tree() {
     local show_dirs_only=0
     local max_depth=-1
     local show_size=0
+    local show_dir_size=0
     local path="."
 
     # 解析选项
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -d) show_dirs_only=1; shift ;;
+            -a) show_dir_size=1; shift ;;
             -L)
                 if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
                     max_depth="$2"; shift 2
@@ -2304,11 +2317,13 @@ cmd_tree() {
                 ;;
             -s) show_size=1; shift ;;
             -h|--help)
-                cecho "用法: TREE [选项] [路径]"
+                cecho -b "用法: TREE [选项] [路径]"
                 cecho "选项:"
                 cecho "  -d          只显示目录"
                 cecho "  -L <深度>   限制递归深度"
-                cecho "  -s          显示文件大小"
+                cecho "  -a          显示目录的总大小"
+                cecho "  -s          显示文件的大小"
+                cecho "  -h, --help  显示此帮助"
                 return 0
                 ;;
             *)
@@ -2333,6 +2348,16 @@ cmd_tree() {
     fi
 
     local tmp_prefix="tree_$$_$(date +%s%N)_${RANDOM:-$$}_"
+    local temp_files=()
+
+    # 保存旧的 EXIT trap, 设置自己的清理
+    local old_exit_trap=$(trap -p EXIT)
+    trap 'rm -f "${temp_files[@]}"' EXIT
+
+    # 中断处理
+    local interrupted=0
+    local old_int_trap=$(trap -p INT)
+    trap 'interrupted=1' INT
 
     _tree_recursive() {
         local dir="$1"
@@ -2347,7 +2372,7 @@ cmd_tree() {
             tmpfile="$tmp_base/${tmp_prefix}$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d ' ')"
             touch "$tmpfile" 2>/dev/null || return
         }
-        trap 'rm -f "$tmpfile" 2>/dev/null' RETURN
+        temp_files+=("$tmpfile")
 
         if ls -A "$dir" >/dev/null 2>&1; then
             ls -A "$dir" | $_SORT 2>/dev/null > "$tmpfile"
@@ -2365,6 +2390,10 @@ cmd_tree() {
 
         local i=0
         while IFS= read -r entry; do
+            # 检查中断标志
+            if [ $interrupted -eq 1 ]; then
+                return
+            fi
             i=$((i+1))
             local full="$dir/$entry"
             local is_last=0
@@ -2377,11 +2406,29 @@ cmd_tree() {
                 child_prefix="${prefix}    "
             fi
 
+            # ========== 防循环：处理符号链接 ==========
+            if [ -L "$full" ]; then
+                # 仅当非 -d 模式时显示, 用青色并加 @ 标记
+                if [ $show_dirs_only -eq 0 ]; then
+                    _cprint -c 36 "${prefix}${connector}${entry}@"
+                fi
+                continue   # 不递归
+            fi
+
             if [ -d "$full" ]; then
                 if [ $show_dirs_only -eq 0 ] || [ $show_dirs_only -eq 1 ]; then
-                    _cprint -c 34 "${prefix}${connector}${entry}"
+                    if [ $show_dir_size -eq 1 ]; then
+                        local dir_size=$(du -sh "$full" 2>/dev/null | awk '{print $1}')
+                        [ -z "$dir_size" ] && dir_size="?"
+                        _cprint -c 33 "${prefix}${connector}${entry} ($dir_size)"
+                    else
+                        _cprint -c 33 "${prefix}${connector}${entry}"
+                    fi
                 fi
-                _tree_recursive "$full" "$child_prefix" $((depth+1))
+                # 递归前再次检查中断
+                if [ $interrupted -eq 0 ]; then
+                    _tree_recursive "$full" "$child_prefix" $((depth+1))
+                fi
             else
                 if [ $show_dirs_only -eq 0 ]; then
                     if [ $show_size -eq 1 ]; then
@@ -2400,6 +2447,12 @@ cmd_tree() {
     [ -z "$rootname" ] && rootname="/"
     _cprint -c 32 "$rootname"
     _tree_recursive "$path" "" 0
+
+    # 恢复 trap
+    eval "$old_exit_trap" 2>/dev/null || trap - EXIT
+    eval "$old_int_trap" 2>/dev/null || trap - INT
+    # 清理可能残留的临时文件(以防万一
+    rm -f "${temp_files[@]}" 2>/dev/null
 }
 
 cmd_adb() {
@@ -2939,6 +2992,7 @@ while true; do
     yesyesyes|yyy|yy|yesyes) lazy_load "laugh_yyy" && cmd_laugh_yyy ;;
     command|commandnotfound) lazy_load "laugh_command_not_found" && cmd_laugh_command_not_found "${args_array[@]}" ;;
     permission|permissiondenied) lazy_load "laugh_permission_denied" && cmd_laugh_permission_denied "${args_array[@]}" ;;
+    mcserver)     lazy_load "laugh_mcserver" && cmd_laugh_mcserver ;;
     wtf)
         lazy_load "hack"  # 预加载依赖
         lazy_load "laugh_wtf" && cmd_laugh_wtf ;;
