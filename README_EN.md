@@ -155,6 +155,7 @@ Note: Excluding hidden (laugh) and debug commands.
 - Config saves your Color, Title, TMPDIR, Clsd settings
 - Recognizes your permissions and gives different prompts
 - Over 230 dev versions
+- Hidden (laugh) command
 - Features related to Minecraft
 
 ### How to Run
