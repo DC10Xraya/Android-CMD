@@ -55,4 +55,4 @@ OHHHHHHH
 Oh My Phoneeeeeeeeeee!!!
 https://github.com/DC10Xraya/Android-CMD
 cat now is ccat
-cal 0
+mcserver
