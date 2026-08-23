@@ -1,7 +1,9 @@
 [简体中文](README.md) | **English**
 
-Android CMD
-============
+# Android CMD
+<p align="left">
+  <img src="icon.png" alt="Android CMD" width="250">
+</p>
 
 ![Language](https://img.shields.io/badge/Language-Bash-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
@@ -111,13 +113,40 @@ Note: Excluding hidden (laugh) and debug commands.
 
 </details>
 
-### Core Modules
-- **System & Files**: TREE, STAT, SIZE/DU, COPY/MOVE/DEL
-- **Network Tools**: PING, SCAN, PORTSCAN, FTP, DOWNLOAD
-- **Encoding & Checksums**: BASE64, URL, MD5, SHA1, CRC32
-- **Performance Monitor**: TM/TASKMGR, TEMP, FREE/DF
-- **Console Extensions**: CECHO, AWKC/BC, TIMER, WATCH
-- **Laugh**: Some easter eggs, not telling you awa
+## Core Foundation Modules
+
+1. **Color & Output System** (`_cprint`/`cecho`/`ccat`)  
+   Provides styled terminal output with colors (16‑color, 256‑color, and hex RGB), bold, italic, underline, and strikethrough. Also parses `//cecho` directives inside files for rich text rendering.
+
+2. **Command Line Parser** (`parse_line`)  
+   A custom argument parser that handles single quotes, double quotes, escape characters, and comments (`#`). Splits input into the `PARSED_ARGS` array for command dispatching.
+
+3. **Configuration Management** (`load_config`/`save_config`)  
+   Reads and writes user settings (background, foreground, title display, temp directory) from/to `etc/cmd_config` for persistence.
+
+4. **History Management** (`HISTFILE` and related functions)  
+   Automatically loads and saves command history, with size checking, deduplication, and full support for the `HISTORY` command.
+
+5. **Signal Handling & Exit Mechanism** (`exit9`/`exit15`/traps)  
+   Handles SIGINT, SIGTERM, etc., recursively kills child process trees, cleans up temporary files, and ensures safe exit (either forceful or graceful).
+
+6. **Utility Functions** (`confirm`/`kill_tree`/`file_op`/`err`)  
+   Provides interactive confirmation, process‑tree killing, file copy/move with overwrite confirmation, and red error output.
+
+7. **Privilege Detection** (`PRIV_LEVEL`/`PROMPT_SYMBOL`)  
+   Detects root, adb, or normal user via `id`, `ps`, and `getprop` at startup, and sets the prompt symbol (`#`/`$`/`->`) accordingly.
+
+8. **Path & Directory Management** (`SCRIPT_DIR`/`RESOURCE_DIR`/`ETC_DIR`/`TMP_DIR`)  
+   Defines and ensures the existence/writability of script root, resource, config, and temporary directories.
+
+9. **Lazy Loader** (`lazy_load`)  
+   Dynamically loads external command files (`cmd_*.bash`) from the `resource/` directory on demand, reducing startup overhead.
+
+10. **Initialization** (`init_tools`/`load_splashes`/`get_title`)  
+    Detects `busybox`, sets tool prefixes, loads random splash messages, and displays the startup title and version info.
+
+11. **Update Checker** (background check + `cmd_update`)  
+    Periodically queries the GitHub API for new releases in the background, caches the result, and prompts for updates in the main loop. The `UPDATE` command shows details manually.
 
 ### Features
 - One-click download and extract, easy to use
