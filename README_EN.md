@@ -113,7 +113,7 @@ Note: Excluding hidden (laugh) and debug commands.
 
 </details>
 
-## Core Foundation Modules
+## Core Foundation Modules(Built into the main script)
 
 1. **Color & Output System** (`_cprint`/`cecho`/`ccat`)  
    Provides styled terminal output with colors (16‑color, 256‑color, and hex RGB), bold, italic, underline, and strikethrough. Also parses `//cecho` directives inside files for rich text rendering.
