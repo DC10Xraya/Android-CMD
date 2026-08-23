@@ -13,7 +13,7 @@ Android CMD
 <details>
 <summary><h2>命令 (91) 点击以查看</h2></summary>
 
-注：不包含隐藏（laugh）和调试命令
+注：不包含隐藏(laugh)和调试命令
   
 | 命令 | 描述 |
 | :--- | :--- |
