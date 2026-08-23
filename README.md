@@ -1,7 +1,9 @@
 **简体中文** | [English](README_EN.md)
 
-Android CMD
-============
+# Android CMD
+<p align="center">
+  <img src="icon.png" alt="Android CMD" width="200">
+</p>
 
 ![Language](https://img.shields.io/badge/Language-Bash-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
