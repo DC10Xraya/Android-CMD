@@ -1,20 +1,20 @@
 Android CMD
 ============
 
-![Language](https://img.shields.io/badge/Language-Shell-blue)
+![Language](https://img.shields.io/badge/Language-Bash-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
-![Lines](https://img.shields.io/badge/Code-8000%2B-blue)
+![Lines](https://img.shields.io/badge/Code-8800%2B-blue)
 ![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
-一个集成了常用运维, 网络与系统监控功能的交互式 Bash 脚本,  专门在 Android 上运行
+一个集成了常用运维, 网络与系统监控功能(还有笑话)的交互式 Bash 脚本,  专门在 Android 上运行
 
 核心模块
 ---------
-- 系统与文件: DIR/TREE(目录树), STAT(文件元数据), SIZE/DU(空间占用), COPY/MOVE/DEL
+- 系统与文件: TREE(目录树), STAT(文件元数据), SIZE/DU(空间占用), COPY/MOVE/DEL
 - 网络工具: PING(支持大包与洪水模拟), SCAN(IP 存活探测), PORTSCAN, FTP(伪交互), DOWNLOAD
 - 编解码与校验: BASE64, URLENCODE/DECODE, MD5, SHA1, CRC32
 - 性能监控: TM/TASKMGR(进程详情与内存), TEMP(传感器温度), FREE/DF
-- 控制台扩展: CECHO(自定义高亮输出), CALC/AWKC/BC(三种计算器), TIMER, WATCH(循环执行)
+- 控制台扩展: CECHO(自定义高亮输出), AWKC/BC(二种计算器), TIMER, WATCH(循环执行)
 - Laugh: 一些彩蛋, 不告诉你 awa
 
 特色
@@ -24,11 +24,12 @@ Android CMD
 - 交互增强: 上下箭头调用历史命令, HISTORY 命令管理记录(0.06+)
 - 配置保存: 保存你的Color、Title、TMPDIR、Clsd设置
 - 识别你的权限, 给你不同的命令提示符
-- 命令众多, 功能强大, 已超过 180 个开发版本
+- 命令众多, 功能强大, 已超过 230 个开发版本
+- 还有关于我的世界的功能和设计
 
 启动方式
 ---------
-1. 解压下载得到的 Releases.*.tar.gz 压缩包
+1. 解压下载得到的 .tar.gz 压缩包
 2. 打开终端, 执行以下命令:
 ```bash
 cd #主程序(cmd_main_dev)所在目录
@@ -41,7 +42,7 @@ bash CMD_main_dev.bash
 ---------
 基础环境为 Bash 4.0+, 必须预装:
 ```txt
-Awk, Grep, Sed, Cat, Cut, Head, Tail, BC
+Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
 ```
 缺失以上依赖无法启动脚本
 
@@ -49,7 +50,7 @@ Awk, Grep, Sed, Cat, Cut, Head, Tail, BC
 
 杂七杂八
 ---------
-这个脚本虽然开发了很久(200多个dev), 但是难免会有不足, 遇到任何问题都可以提出, 不喜欢也别喷qwq
+这个脚本虽然开发了很久(230多个dev), 但是难免会有不足, 遇到任何问题都可以提出, 不喜欢也别喷qwq
 
 许可证
 -------
