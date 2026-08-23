@@ -1,9 +1,16 @@
-**简体中文** | [English](README_EN.md)
-
 # Android CMD
+
+## **简体中文** | [English](README_EN.md)
+
 <p align="left">
   <img src="icon.png" alt="Android CMD" width="250">
 </p>
+
+> The latest version:
+>
+> [![Latest Release](https://img.shields.io/github/v/release/DC10Xraya/Android-CMD?label=&color=white)](https://github.com/DC10Xraya/Android-CMD/releases)
+>
+> [See Releases](https://github.com/DC10Xraya/Android-CMD/releases)
 
 ![Language](https://img.shields.io/badge/Language-Bash-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
@@ -113,6 +120,32 @@
 
 </details>
 
+### 重点功能
+网络与服务器
+- DOWNLOAD: 更简单的下载, 只需要网址和本地路径
+- WINDOWS风格的PING
+- SCAN、PORTSCAN(伪多线程扫描)
+- 交互式 FTP 客户端: 支持连接、上传、下载、批量操作(mget/mput)，完美适配手机端操作
+
+系统与安卓定制
+- 内置手写 TREE 命令, 无需系统自带的 tree 工具
+- 全维度监控: TASKMGR(任务管理器)、MEMORY 实时监控
+- 安卓专属: GETPROP(系统属性)、RES/WM(屏幕分辨率)、LOGCAT(系统日志)、ADB
+
+关于Minecraft
+- 模组下载器：MCMODDOWNLOAD 通过 Modrinth API，批量下载 Java 版模组
+- 服务器模拟器(隐藏)：MCSERVER 模拟在手机上运行JAVA版Paper服务端
+
+### 特色
+- 下载解压一键式使用, 上手简单
+- 模块化设计, Lazy加载(0.05+), 启动更快 ; 新的函数可以放在 resource 目录中, 易于维护 ; 配置与历史记录保存在 etc 目录下(0.06+)
+- 交互增强: 上下箭头调用历史命令, HISTORY 命令管理记录(0.06+)
+- 配置保存: 保存你的Color、Title、TMPDIR、Clsd设置
+- 识别你的权限, 给你不同的命令提示符
+- 命令众多, 功能强大, 已超过 230 个开发版本
+- Laugh隐藏命令(NO tell you)
+- 关于我的世界的功能和设计
+
 ### 核心基础模块(主程序内置)
 
 1. **颜色与输出系统** (`_cprint`/`cecho`/`ccat`)  
@@ -148,16 +181,6 @@
 11. **版本更新检查**（后台检查 + `cmd_update`）  
     启动时后台从 GitHub API 获取最新版本, 缓存结果并在主循环中提示更新; `UPDATE` 命令可手动查看详情.
 
-### 特色
-- 下载解压一键式使用, 上手简单
-- 模块化设计, Lazy加载(0.05+), 启动更快 ; 新的函数可以放在 resource 目录中, 易于维护 ; 配置与历史记录保存在 etc 目录下(0.06+)
-- 交互增强: 上下箭头调用历史命令, HISTORY 命令管理记录(0.06+)
-- 配置保存: 保存你的Color、Title、TMPDIR、Clsd设置
-- 识别你的权限, 给你不同的命令提示符
-- 命令众多, 功能强大, 已超过 230 个开发版本
-- Laugh隐藏命令(NO tell you)
-- 关于我的世界的功能和设计
-
 ### 启动方式
 1. 解压下载得到的 .tar.gz 压缩包
 2. 打开终端, 执行以下命令:
@@ -168,7 +191,7 @@ bash CMD_main_dev.bash
 
 启动后输入 HELP 或 /? 即可查看所有命令列表
 
-运行依赖
+### 运行依赖
 
 基础环境为 Bash 4.0+, 必须预装:
 
@@ -178,11 +201,11 @@ Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
 
 缺失以上依赖无法启动脚本。其他的依赖缺失可能导致部分命令无法使用。
 
-杂七杂八
+### 杂七杂八
 
 这个脚本虽然开发了很久(230多个dev), 但是难免会有不足, 遇到任何问题都可以提出, 不喜欢也别喷qwq
 
-许可证
+### 许可证
 
 MIT License
 Copyright (c) 2026 DC10Xray
