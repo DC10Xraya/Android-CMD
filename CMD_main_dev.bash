@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.13 (dev0.237)"
+CMD_VER="0.13 (dev0.238)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -1108,7 +1108,8 @@ $CMD_delimiter
   TL/TASKLIST     进程列表
   TM/TOP/TASKMGR  任务管理器
   TEMP            显示温度传感器、温度墙和温控状态
-  MONITOR         监控时间、内存和温度(约每2s刷新)
+  MONITOR         实时显示时间、内存和温度(约每2s刷新)
+  CPUMONITOR      实时显示每个CPU核心的当前频率
   WHOAMI/OP       显示当前用户UID和权限
   WHICH           查找命令路径
   DISKC [参数]    检测各可读(写)挂载点的读写速度
@@ -1626,6 +1627,93 @@ cmd_move() {
 
 cmd_free() {
     $_FREE -h 2>&1 | while IFS= read -r line; do cecho "$line"; done
+}
+
+cmd_cpumonitor() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: CPUMONITOR"
+        cecho "实时显示每个CPU核心的当前频率(按Ctrl+C退出)"
+        return 0
+    fi
+
+    # 获取核心数量
+    local cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo)
+    if [ -z "$cores" ] || [ "$cores" -eq 0 ]; then
+        err "无法获取 CPU 核心数量"
+        return 1
+    fi
+
+    # 先建立核心与频率文件路径的映射(与 systeminfo 一致)
+    local core_paths=()
+    local core_indices=()
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*/cpufreq; do
+        if [ -d "$cpu_dir" ] && [ -r "$cpu_dir/scaling_cur_freq" ]; then
+            core=$(basename $(dirname "$cpu_dir"))  # 得到 cpu0, cpu1, ...
+            core_num=${core#cpu}                    # 提取数字
+            core_paths[$core_num]="$cpu_dir/scaling_cur_freq"
+            core_indices+=($core_num)
+        fi
+    done
+
+    # 如果没有任何核心可读, 报错退出
+    if [ ${#core_indices[@]} -eq 0 ]; then
+        err "未找到可读取频率的 CPU 核心"
+        return 1
+    fi
+
+    # 按数字排序核心索引(保证输出顺序)
+    local sorted_indices=($(printf '%s\n' "${core_indices[@]}" | sort -n))
+
+    # 保存旧的 INT trap, 设置自己的
+    local old_trap=$(trap -p INT)
+    local stop=0
+    trap 'stop=1' INT
+
+    cecho "按Ctrl+C退出CPU监控"
+    cecho "$CMD_delimiter"
+
+    # 预输出占位行(每个核心一行)
+    for idx in "${sorted_indices[@]}"; do
+        echo
+    done
+
+    while [ $stop -eq 0 ]; do
+        # 回退到起始位置
+        printf "\033[${#sorted_indices[@]}A"
+
+        for idx in "${sorted_indices[@]}"; do
+            local freq_path="${core_paths[$idx]}"
+            local freq_display="N/A"
+            if [ -n "$freq_path" ] && [ -r "$freq_path" ]; then
+                local raw=$($_CAT "$freq_path" 2>/dev/null | tr -d '\n\r')
+                if [ -n "$raw" ] && [ "$raw" -gt 0 ] 2>/dev/null; then
+                    # 转换为 MHz, 保留一位小数(与 systeminfo 一致)
+                    freq_display=$(awk "BEGIN {printf \"%.1f MHz\", $raw/1000}" 2>/dev/null)
+                    [ -z "$freq_display" ] && freq_display="$((raw/1000)) MHz"
+                else
+                    freq_display="offline"
+                fi
+            else
+                freq_display="offline"
+            fi
+            printf "\r\033[KCPU$idx: %s\n" "$freq_display"
+        done
+
+        # 等待 0.5 秒, 可被中断
+        sleep 0.5
+    done
+
+    # 退出时清空所有行并恢复光标
+    printf "\033[${#sorted_indices[@]}A"
+    for idx in "${sorted_indices[@]}"; do
+        printf "\033[K\n"
+    done
+    printf "\033[${#sorted_indices[@]}A"
+
+    # 恢复原来的 trap
+    eval "$old_trap" 2>/dev/null || trap - INT
+    cecho "已退出 CPU 监控"
+    return 0
 }
 
 cmd_monitor() {
