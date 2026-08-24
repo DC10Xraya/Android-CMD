@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.13 (dev0.238)"
+CMD_VER="0.14 (dev0.241)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -1071,6 +1071,7 @@ $CMD_delimiter
 //cecho -c 93 "若参数包含空格, 用双引号或者单引号包裹即可"
   COPY/CP [源...] [目标]    复制文件/目录 ⤸
   -(支持多个源,目标为目录时复制到目录下)
+  CD                        修改工作目录
   RM/DEL [文件]             删除文件或目录
   RD/RMDIR [目录]           删除空目录
   FIND <关键词/正则表达式> <文件1> [文件2...] ⤸
@@ -1079,11 +1080,12 @@ $CMD_delimiter
   NEW/TOUCH <文件>          创建新文件或者更新文件时间
   MOVE [源...] [目标]       移动文件/目录,或重命名(同目录下)
   REN  [旧名] [新名]        重命名文件(=MOVE)
-  DIR [路径]                列出目录内容
+  DIR/LS [路径]             列出目录内容
   DU [目录]                 列出目录大小
   SIZE [文件]               列出文件大小
   STAT <文件>               显示文件的详细信息
-  WC [选项] [文件]          统计行数、单词数、字符数
+  WC [选项] [文件...]       统计行数、单词数、字符数
+  CODEWC [选项] [文件...]   统计代码的行数、单词数、字符数(BETA)
   LN -s <源> <目标>         创建软链接(符号链接)
   TREE [选项] [路径]        显示目录树
   TYPE [文件]               查看文本文件
@@ -1094,13 +1096,14 @@ $CMD_delimiter
 
 //cecho -b "系统信息"
   NOW             显示当前时钟
-  CAL [模式/年份] [月份] 显示日历
+  CAL [模式/年] [月]  显示日历
   CLOCK           显示实时时间(每0.1s刷新)
   FREE            显示当前内存使用
   DF              显示磁盘使用情况
   GETPROP [KEY]   系统属性(空KEY分页显示全部)
   ENV/EXPORT      环境变量(空参数帮助)
   LOGCAT          系统日志相关功能
+  PATH            显示PATH变量
   UPTIME          系统运行时间
   RES/WM          显示屏幕相关信息(WM详细,RES兼容)
   BATT            显示电池信息
@@ -1115,6 +1118,7 @@ $CMD_delimiter
   DISKC [参数]    检测各可读(写)挂载点的读写速度
   DISKT [参数]    检测当前存储设备的顺序和随机读写速度
   PWD             显示当前工作目录
+  SDIR            显示脚本所在目录
   SELF            显示当前脚本路径
 
 //cecho -b "网络"
@@ -1492,7 +1496,7 @@ cmd_ln() {
         return 1
     fi
     if [ -e "$target" ] || [ -L "$target" ]; then
-        confirm "目标 '$target' 已存在, 是否覆盖?" || { cecho "已取消"; return 0; }
+        confirm "目标 '$target' 已存在, 是否覆盖?" || { echo ""; return 0; }
         rm -f "$target" 2>/dev/null || { err "无法删除已存在的目标: $target"; return 1; }
     fi
     ln -s "$src" "$target" 2>/dev/null
@@ -1533,7 +1537,7 @@ cmd_del() {
     [ $# -eq 0 ] && { err "命令语法不正确"; return; }
     for f in "$@"; do
         if [ -e "$f" ]; then
-            confirm "删除 $f 吗?" || { cecho "操作已取消"; continue; }
+            confirm "删除 $f 吗?" || { cecho "已取消"; continue; }
             if [ -d "$f" ]; then
                 $_RM -r "$f" 2>/dev/null && cecho "已删除目录: $f" || err "删除目录 $f 失败"
             else
@@ -1577,7 +1581,7 @@ cmd_rd() {
     [ $# -eq 0 ] && { err "命令语法不正确"; return; }
     for dir in "$@"; do
         if [ -d "$dir" ]; then
-            confirm "删除目录 $dir 吗?" || { cecho "操作已取消"; continue; }
+            confirm "删除目录 $dir 吗?" || { cecho "已取消"; continue; }
             $_RMDIR "$dir" 2>/dev/null || err "目录删除失败(可能非空): $dir"
         else
             err "系统找不到指定的路径: $dir"
@@ -2054,22 +2058,12 @@ cmd_env() {
 }
 
 cmd_watch() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ] || [ $# -lt 2 ]; then
         cecho -b "用法: WATCH <秒数> <命令> [参数]"
         cecho "示例: WATCH 2 cmd_systeminfo"
         cecho "      WATCH 5 ls -l /sdcard"
-        cecho "提示: 通过<内部命令名称>运行此脚本内置命令"
         cecho "按Ctrl+C中断"
         return 0
-    fi
-
-    if [ $# -lt 2 ]; then
-        err "用法: WATCH <秒数> <命令> [参数]"
-        cecho "示例: WATCH 2 systeminfo"
-        cecho "      WATCH 5 ls -l /sdcard"
-        cecho "提示: 通过<内部命令名称>运行此脚本内置命令"
-        cecho "按Ctrl+C随时中断"
-        return 1
     fi
 
     local interval="$1"
@@ -2124,20 +2118,12 @@ cmd_watch() {
 }
 
 cmd_repeat() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ] || [ $# -lt 2 ]; then
         cecho -b "用法: REPEAT <次数> <命令> [参数]"
         cecho "示例: REPEAT 100 echo Hello World"
         cecho "      REPEAT 3 ls -l"
         cecho "按Ctrl+C中断"
         return 0
-    fi
-
-    if [ $# -lt 2 ]; then
-        err "用法: REPEAT <次数> <命令> [参数]"
-        cecho "示例: REPEAT 100 echo Hello World"
-        cecho "      REPEAT 3 ls -l"
-        cecho "按Ctrl+C中断"
-        return 1
     fi
 
     local count="$1"
@@ -2439,8 +2425,8 @@ cmd_find() {
 }
 
 cmd_wc() {
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: WC [选项] [文件]"
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 1 ]; then
+        cecho -b "用法: WC [选项] [文件...]"
         cecho "统计行数、单词数、字符数"
         cecho "选项: 与系统WC相同, 输出美化"
         return 0
@@ -2489,6 +2475,7 @@ cmd_diff() {
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 2 ]; then
         cecho -b "用法: DIFF [选项] <1> <2>"
         cecho "比较两个文件/目录的差异"
+        cecho "选项: 与系统diff相同, 输出美化"
         return 0
     fi
 
@@ -2704,7 +2691,7 @@ cmd_adb() {
         return 0
     fi
     if ! confirm "确认要执行此ADB命令吗?(请确认命令是否安全!)"; then
-        cecho "已取消执行"
+        cecho "已取消"
         return 0
     fi
     if command -v adb >/dev/null 2>&1; then
@@ -2786,7 +2773,7 @@ cmd_sh() {
         return 1
     fi
     if ! confirm "确认要执行此脚本吗?(请确认脚本内不含危险代码!)"; then
-        cecho "已取消执行"
+        cecho "已取消"
         return 0
     fi
     cecho "执行脚本: $script"
@@ -2853,7 +2840,7 @@ cmd_kill() {
         cecho "进程信息: $proc_info"
         echo ""
         if ! confirm "强制终止此进程吗?"; then
-            cecho "操作已取消"
+            cecho "已取消"
             return 0
         fi
     else
@@ -2861,7 +2848,7 @@ cmd_kill() {
         cecho "进程信息: $proc_info"
         echo ""
         if ! confirm "终止此进程吗?"; then
-            cecho "操作已取消"
+            cecho "已取消"
             return 0
         fi
     fi
@@ -2937,37 +2924,70 @@ debug_0() {
     esac
 }
 debug_2() {
-    # 主程序
-    local main_lines=$(wc -l < "$0" 2>/dev/null)
+    # 加载 codewc
+    lazy_load "codewc" || {
+        err "无法加载 codewc"
+        return 1
+    }
+    if ! type -t cmd_codewc >/dev/null 2>&1; then
+        err "cmd_codewc 未定义"
+        return 1
+    fi
+
+    # 主程序统计(原始+有效)
+    local main_file="$0"
+    local main_name=$(basename "$main_file")
+    local main_lines=$(wc -l < "$main_file" 2>/dev/null | tr -d ' ')
+    local main_bytes=$(wc -c < "$main_file" 2>/dev/null | tr -d ' ')
     [[ -z "$main_lines" ]] && main_lines=0
-    local main_bytes=$(wc -c < "$0" 2>/dev/null)
     [[ -z "$main_bytes" ]] && main_bytes=0
 
-    # 统计 resource 目录
-    local res_total=0
-    local res_bytes=0
-    local file_count=0
-    if [[ -d "$RESOURCE_DIR" ]]; then
-        while IFS= read -r -d '' file; do
-            local lines=$(wc -l < "$file" 2>/dev/null)
-            if [[ $? -eq 0 ]]; then
-                res_total=$((res_total + lines))
-                ((file_count++))
-                # 增加字节数统计
-                local bytes=$(wc -c < "$file" 2>/dev/null)
-                [[ -n "$bytes" ]] && res_bytes=$((res_bytes + bytes))
-            fi
-        done < <(find "$RESOURCE_DIR" -type f -name "*.bash" -print0 2>/dev/null)
+    local main_eff_lines=0 main_eff_words=0 main_eff_chars=0
+    local main_eff_output=$(cmd_codewc -t shell "$main_file" 2>/dev/null)
+    if [[ -n "$main_eff_output" ]]; then
+        local eff_line=$(echo "$main_eff_output" | grep "有效" | head -1)
+        main_eff_lines=$(echo "$eff_line" | grep -oE '有效行数: [0-9]+' | grep -oE '[0-9]+')
+        main_eff_words=$(echo "$eff_line" | grep -oE '有效单词数: [0-9]+' | grep -oE '[0-9]+')
+        main_eff_chars=$(echo "$eff_line" | grep -oE '有效字符数: [0-9]+' | grep -oE '[0-9]+')
+        [[ -z "$main_eff_lines" ]] && main_eff_lines=0
+        [[ -z "$main_eff_words" ]] && main_eff_words=0
+        [[ -z "$main_eff_chars" ]] && main_eff_chars=0
     fi
 
-    cecho -b "--- 代码统计 ---"
-    cecho "主程序 ($(basename "$0")): $main_lines 行, $main_bytes 字节"
-    if [[ $file_count -gt 0 ]]; then
-        cecho "资源目录 (共 $file_count 个 .bash 文件): $res_total 行, $res_bytes 字节"
-    else
-        err "资源目录未发现bash文件"
+    # 资源目录统计(仅原始
+    local res_total_lines=0 res_total_bytes=0
+    local file_count=0
+
+    if [[ -d "$RESOURCE_DIR" ]]; then
+        shopt -s globstar nullglob dotglob
+        local bash_files=("$RESOURCE_DIR"/**/*.bash)
+        shopt -u globstar nullglob dotglob
+
+        for file in "${bash_files[@]}"; do
+            if [ -f "$file" ]; then
+                local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+                local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+                [[ -z "$lines" ]] && lines=0
+                [[ -z "$bytes" ]] && bytes=0
+                res_total_lines=$((res_total_lines + lines))
+                res_total_bytes=$((res_total_bytes + bytes))
+                ((file_count++))
+            fi
+        done
     fi
-    cecho -b "总行数: $((main_lines + res_total))  总字节数: $((main_bytes + res_bytes))"
+
+    # 总计
+    local total_lines=$((main_lines + res_total_lines))
+    local total_bytes=$((main_bytes + res_total_bytes))
+
+    cecho -b "--- 代码统计 ---"
+    cecho "主程序 ($main_name): $main_lines 行, $main_bytes 字节 | 有效: $main_eff_lines 行, $main_eff_words 单词, $main_eff_chars 字符"
+    if [[ $file_count -gt 0 ]]; then
+        cecho "资源目录 (共 $file_count 个 .bash 文件): $res_total_lines 行, $res_total_bytes 字节"
+    else
+        err "资源目录未发现任何 .bash"
+    fi
+    cecho -b "总计: $total_lines 行, $total_bytes 字节"
 }
 # ---------- 主逻辑 ---------
 # ps:自定义解析器、命令提示符设定已被移至前面
@@ -3155,71 +3175,40 @@ while true; do
 
     # 命令分发(按照命令列表顺序)
     case "$cmd" in
-    # ---------- 文件和目录操作 ----------
+    # ---------- 内部别名 ----------
     copy|cp)           cmd_copy "${args_array[@]}" ;;
     del|rm|erase)      cmd_del "${args_array[@]}" ;;
-    find)              cmd_find "${args_array[@]}" ;;
     md|mkdir)          cmd_md "${args_array[@]}" ;;
+    dir|ls)            cmd_dir "${args_array[@]}" ;;
     touch|new)         cmd_touch "${args_array[@]}" ;;
     move|ren|rename)   cmd_move "${args_array[@]}" ;;
     rd|rmdir)          cmd_rd "${args_array[@]}" ;;
-    dir)               cmd_dir "${args_array[@]}" ;;
-    du)                cmd_du "${args_array[@]}" ;;
-    size)              cmd_size "${args_array[@]}" ;;
-    ln)                cmd_ln "${args_array[@]}" ;;
-    tree)              cmd_tree "${args_array[@]}" ;;
-    type)              cmd_type "${args_array[@]}" ;;
-    more)              cmd_more "${args_array[@]}" ;;
-    # ---------- 系统信息 ----------
     now|date|time|datetime)  cecho "$($_DATE "+%Y-%m-%d %H:%M:%S (%A)")" ;;
-    clock)             cmd_clock ;;
-    free)              cmd_free ;;
-    df)                $_DF -h 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
-    getprop)           cmd_getprop "${args_array[@]}" ;;
     env|export)        cmd_env "${args_array[@]}" ;;
-    path)              cecho "$PATH" ;;
-    uptime)            $_UPTIME 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
-    systeminfo)        cmd_systeminfo ;;
+    systeminfo|sysinfo)  cmd_systeminfo ;;
     tl|tasklist)       cmd_tasklist ;;
-    which)             cmd_which "${args_array[@]}" ;;
-    pwd)               cecho "$(pwd)" ;;
-    self)              cecho "$0" ;;
-    # ---------- 网络 ----------
-    netstat)           $_NETSTAT 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
-    hostname)          cecho "$($_HOSTNAME 2>/dev/null || echo 'localhost')" ;;
-    # ---------- 控制台 / 杂项 ----------
     help|/? )          cmd_help ;;
     cls|clear)         cmd_cls "${args_array[@]}" ;;
     clsd|cleard)       cmd_clsd "${args_array[@]}" ;;
-    title)             cmd_title "${args_array[@]}" ;;
-    color)             cmd_color "${args_array[@]}" ;;
-    tmpdir)            cmd_tmpdir "${args_array[@]}" ;;
-    resource)          cmd_resource "${args_array[@]}" ;;
-    history)           cmd_history "${args_array[@]}" ;;
-    config)            cmd_config "${args_array[@]}" ;;
-    update)            cmd_update ;;
     echo|print)        cmd_echo "${args_array[@]}" ;;
-    printf)            printf "${args_array[@]}"; echo "" ;;
-    cecho)             cmd_cecho "${args_array[@]}" ;;
-    err)               err "${args_array[*]}" ;;
-    yes)               cmd_yes "${args_array[@]}" ;;
-    sleep)             cmd_sleep "${args_array[@]}" ;;
-    awkc)              cmd_awkc "${args_array[@]}" ;;
-    bc)                cmd_bc "${args_array[@]}" ;;
-    watch)             cmd_watch "${args_array[@]}" ;;
-    repeat)            cmd_repeat "${args_array[@]}" ;;
     exit|exit15)       cmd_exit15 ;;
-    exit9)             cmd_exit9 ;;
     exitk|killself)    cmd_killself ;;
     cmdinfo|info)      cmd_cmdinfo ;;
     ctrl+c)            cmd_exit15_0 ;;
-    ulimit)            cmd_ulimit "${args_array[@]}" ;;
-    sh)                cmd_sh "${args_array[@]}" ;;
     c|cmd)             cmd_cmd "${args_array[@]}" ;;
-    adb)               cmd_adb "${args_array[@]}" ;;
-    running)           cmd_running "${args_array[@]}" ;;
-    kill)              cmd_kill "${args_array[@]}" ;;
-    # ---------- debug  ----------
+    # ---------- 显式调用 ----------
+    df)                $_DF -h 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
+    path)              cecho "$PATH" ;;
+    scriptdir|sdir)    cecho "$SCRIPT_DIR" ;;
+    pwd)               cecho "$(pwd)" ;;
+    self)              cecho "$0" ;;
+    uptime)            $_UPTIME 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
+    netstat)           $_NETSTAT 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
+    hostname)          cecho "$($_HOSTNAME 2>/dev/null || echo 'localhost')" ;;
+    printf)            printf "${args_array[@]}"; echo "" ;;
+    err)               err "${args_array[*]}" ;;
+    cd)                cd "${args_array[*]}" ;;
+    # ---------- debug ------------
     debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug)
         err "调试模式还在设计中(真的吗?)" ;;
     debug___|debug_help_|help_debug_)  debug_help ;;
@@ -3227,7 +3216,7 @@ while true; do
     debug_1)  cmd_resource load -debug "${args_array[@]}" ;;
     debug_2|debug_line)  debug_2 ;;
     $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
-    # ---------- 特殊 ----------
+    # ---------- SP ----------
     114514)     lazy_load "laugh_114514" && cmd_laugh_114514 ;;
     100|dve100) lazy_load "laugh_100" && cmd_laugh_100 ;;
     200|dev200) lazy_load "laugh_200" && cmd_laugh_200 ;;
@@ -3241,15 +3230,15 @@ while true; do
     wtf2)
         lazy_load "hack2" # 预加载依赖
         lazy_load "laugh_wtf2" && cmd_laugh_wtf2 ;;
-    netneig)  
+    netneig|netneighbor)  
         lazy_load "scan"  # 预加载依赖
         lazy_load "netneig" && cmd_netneig ;;
     cmd_bomb_fork|bomb_fork|fork_bomb) lazy_load "bomb_fork" && cmd_bomb_fork ;;
-    # ---------- 别名 ----------
+    # ---------- 资源目录别名 ----------
+    codewc|wccode) lazy_load "codewc" && cmd_codewc ;;
     whoami|op) lazy_load "whoami_op" && cmd_whoami_op ;;
     b64)       lazy_load "base64" && cmd_base64 "${args_array[@]}" ;;
     st)       lazy_load "speedtest" && cmd_speedtest ;;
-    sysinfo)  lazy_load "systeminfo" && cmd_systeminfo ;;
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 ;;
