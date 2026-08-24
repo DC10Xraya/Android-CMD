@@ -43,15 +43,18 @@ cmd_diskt() {
         [ -n "$test_file" ] && rm -f "$test_file" 2>/dev/null
         [ -n "$test_file2" ] && rm -f "$test_file2" 2>/dev/null
     }
-
+    # 确保函数返回时清理
+    trap '_cleanup_diskt' RETURN
+    # EXIT 陷阱作为最后防线
     trap '_cleanup_diskt; eval "$old_int_trap" 2>/dev/null || trap - INT; eval "$old_exit_trap" 2>/dev/null || trap - EXIT' EXIT
+    # 中断时清理并返回
     trap '_cleanup_diskt; return 130' INT
     # -----------------------------
 
     for tool in dd date awk cp; do
         if ! command -v "$tool" >/dev/null 2>&1; then
             err "缺少必要工具: $tool"
-            return 1
+            return 1  # RETURN 陷阱会触发
         fi
     done
 
@@ -61,7 +64,6 @@ cmd_diskt() {
         return 1
     fi
 
-    # 这里 test_file 和 test_file2 将被赋值，清理函数将使用它们
     test_file="$test_dir/disktest_$$"
     test_file2="$test_dir/disktest2_$$"
     local seq_bs_bytes=$((seq_bs_mb * 1024 * 1024))
@@ -101,7 +103,7 @@ cmd_diskt() {
         local time_read_cp=$( _time_cmd "dd if='$test_file2' of=/dev/null bs=1M 2>/dev/null" )
         local speed_read_cp=$(awk "BEGIN {printf \"%.2f\", $file_size_mb / $time_read_cp}")
         cecho "复制后读取: ${speed_read_cp} MB/s (耗时 ${time_read_cp}s)"
-        return 0   # EXIT trap 会清理并恢复
+        return 0  # RETURN 陷阱会清理
     fi
 
     # ---------- 顺序写 ----------
@@ -175,5 +177,5 @@ cmd_diskt() {
     err "  注意: 结果仅供参考, 精确测试建议使用 AndroBench"
     cecho "$CMD_delimiter"
 
-    return 0   # EXIT trap 会清理并恢复
+    return 0   # RETURN 陷阱会清理
 }

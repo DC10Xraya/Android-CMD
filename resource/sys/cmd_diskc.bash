@@ -1,4 +1,4 @@
-#resource/cmd_diskcheck.bash
+#resource/cmd_diskc.bash
 cmd_diskc() {
     local timeout_ms=2000
     local writable_only=0
@@ -15,7 +15,8 @@ cmd_diskc() {
         esac
     done
     cecho "准备中...可能需要一定时间,按Ctrl+C随时终止"
-    # 信号处理
+
+    # ---------- 信号处理 ----------
     local old_trap=$(trap -p INT)
     local -a temp_files=()
     local interrupted=0
@@ -26,6 +27,9 @@ cmd_diskc() {
         done
         temp_files=()
     }
+    # 确保函数返回时清理
+    trap '_cleanup_diskcheck' RETURN
+    # 中断时清理并返回
     trap 'interrupted=1; _cleanup_diskcheck; return 130' INT
 
     # 收集所有非虚拟挂载点
@@ -153,7 +157,7 @@ cmd_diskc() {
         _test_mountpoint "$mp"
     done
 
-    _cleanup_diskcheck
+    # 恢复原始 INT 陷阱
     eval "$old_trap" 2>/dev/null || trap - INT
     [ $interrupted -eq 1 ] && return 130
     return 0
