@@ -14,107 +14,115 @@
 
 ![Language](https://img.shields.io/badge/Language-Bash-blue)
 ![License](https://img.shields.io/badge/License-MIT-blue)
-![Lines](https://img.shields.io/badge/Code-8800%2B-blue)
 ![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
 一个集成了常用运维, 网络与系统监控功能(还有笑话)的交互式 Bash 脚本,  专门在 Android 上运行
 
 <details>
-<summary><h2>命令 (91) 点击以查看</h2></summary>
+<summary><h2>命令 (91+) 点击以查看</h2></summary>
 
 注：不包含隐藏(laugh)和调试命令
-  
+
 | 命令 | 描述 |
 | :--- | :--- |
 | COPY/CP | 复制文件/目录 |
+| CD | 修改工作目录 |
 | RM/DEL | 删除文件或目录 |
 | RD/RMDIR | 删除空目录 |
-| FIND | 在指定文件中搜索 |
+| FIND | 在指定文件中搜索字符串/正则表达式 |
 | MD/MKDIR | 创建目录 |
-| NEW/TOUCH | 创建新文件 |
-| MOVE | 移动或重命名 |
-| REN | 重命名文件 |
-| DIR | 列出目录内容 |
+| NEW/TOUCH | 创建新文件或者更新文件时间 |
+| MOVE | 移动文件/目录，或重命名（同目录下） |
+| REN | 重命名文件（=MOVE） |
+| DIR/LS | 列出目录内容 |
 | DU | 列出目录大小 |
 | SIZE | 列出文件大小 |
-| STAT | 显示文件详细信息 |
-| LN -s | 创建软链接 |
+| STAT | 显示文件的详细信息 |
+| WC | 统计行数、单词数、字符数 |
+| CODEWC | 统计代码的行数、单词数、字符数（BETA） |
+| LN -s | 创建软链接（符号链接） |
 | TREE | 显示目录树 |
 | TYPE | 查看文本文件 |
-| MORE | 分页查看 |
-| ZIP | 创建ZIP压缩包 |
-| UNZIP | 解压ZIP压缩包 |
+| MORE | 分页查看文本文件（不支持颜色） |
+| ZIP | 创建 ZIP 压缩包（支持目录递归） |
+| UNZIP | 解压 ZIP 压缩包 |
 | NOW | 显示当前时钟 |
 | CAL | 显示日历 |
-| CLOCK | 实时时间 |
-| FREE | 内存使用 |
-| DF | 磁盘使用 |
-| GETPROP | 系统属性 |
-| ENV/EXPORT | 环境变量 |
-| LOGCAT | 系统日志 |
-| UPTIME | 运行时间 |
-| RES/WM | 屏幕信息 |
-| BATT | 电池信息 |
+| CLOCK | 显示实时时间（每 0.1s 刷新） |
+| FREE | 显示当前内存使用 |
+| DF | 显示磁盘使用情况 |
+| GETPROP | 系统属性（空 KEY 分页显示全部） |
+| ENV/EXPORT | 环境变量（空参数帮助） |
+| LOGCAT | 系统日志相关功能 |
+| PATH | 显示 PATH 变量 |
+| UPTIME | 系统运行时间 |
+| RES/WM | 显示屏幕相关信息（WM 详细，RES 兼容） |
+| BATT | 显示电池信息 |
 | SYSTEMINFO | 系统信息 |
 | TL/TASKLIST | 进程列表 |
 | TM/TOP/TASKMGR | 任务管理器 |
-| TEMP | 温度监控 |
-| MONITOR | 监控时间、内存、温度 |
-| WHOAMI/OP | 用户UID和权限 |
+| TEMP | 显示温度传感器、温度墙和温控状态 |
+| MONITOR | 实时显示时间、内存和温度（约每 2s 刷新） |
+| CPUMONITOR | 实时显示每个 CPU 核心的当前频率 |
+| WHOAMI/OP | 显示当前用户 UID 和权限 |
 | WHICH | 查找命令路径 |
-| DISKC | 挂载点读写速度 |
-| DISKT | 存储设备读写速度 |
-| PWD | 当前目录 |
-| SELF | 脚本路径 |
+| DISKC | 检测各可读（写）挂载点的读写速度 |
+| DISKT | 检测当前存储设备的顺序和随机读写速度 |
+| PWD | 显示当前工作目录 |
+| SDIR | 显示脚本所在目录 |
+| SELF | 显示当前脚本路径 |
 | NETSTAT | 网络连接统计 |
-| HOSTNAME | 主机名 |
-| DNS | 转换IPV4或域名 |
-| NETNEIG | 扫描局域网主机 |
-| FTP | FTP功能 |
+| HOSTNAME | 显示主机名 |
+| DNS | 相互转换 IPV4 或域名 |
+| NETNEIG | 扫描局域网下的主机 |
+| FTP | FTP 功能 |
 | PING | 测试网络连接 |
-| SCAN | 扫描存活主机 |
-| PORTSCAN | 扫描存活端口 |
-| DOWNLOAD | 下载网络文件 |
-| ST/SPEEDTEST | 网络测速 |
-| MCMODDOWNLOAD | 从Modrinth下载模组 |
-| BASE64/B64 | Base64编解码 |
-| SHA256 | 计算SHA256 |
-| SHA1 | 计算SHA1 |
-| MD5 | 计算MD5 |
-| CRC32 | 计算CRC32 |
-| PSD | 生成随机密码 |
-| RAND | 生成随机数 |
+| SCAN | 扫描网络中的存活主机 |
+| PORTSCAN | 扫描指定地址的存活端口 |
+| DOWNLOAD | 下载网络文件到本地 |
+| ST/SPEEDTEST | 网络测速（默认 Cloudflare 10MB，注意流量消耗） |
+| MCMODDOWNLOAD | 从 Modrinth 下载 MC JAVA 模组 |
+| BASE64/B64 | Base64 编码/解码 |
+| SHA256 | 计算文件的 SHA256 |
+| SHA1 | 计算文件的 SHA1 |
+| MD5 | 计算文件的 MD5 |
+| CRC32 | 计算文件的 CRC32（cksum） |
+| DIFF | 比较两个文件/目录的差异 |
+| PSD | 生成符合要求的随机密码 |
+| RAND | 生成随机数（默认四位数） |
 | ECHO/PRINT | 显示消息 |
-| PRINTF/ECHO -e | 解析代码显示 |
-| CECHO | 自定义显示 |
-| ERR | 显示错误 |
-| YES | 刷屏 |
-| HACK | 穷举目标 |
-| HACK2 | 二分法穷举目标 |
-| AWKC | AWK计算器 |
+| PRINTF/ECHO -e | 解析代码的显示消息 |
+| CECHO | ME 自定义的显示消息 |
+| ERR | 显示错误样式消息（红色） |
+| YES | 刷屏某一内容直至按下 Ctrl+C |
+| HACK | 穷举可打印字符直到找到目标 |
+| HACK2 | 同上，但是使用二分法 |
+| AWKC | AWK 计算器 |
 | BC | 任意精度计算器 |
 | TIMER | 倒计时/闹钟 |
 | SLEEP | 睡眠指定时间 |
-| WATCH | 循环执行命令 |
-| REPEAT | 重复执行指定次数 |
-| CLS/CLEAR | 清除屏幕 |
+| WATCH | 每隔指定时间清除屏幕并运行命令 |
+| REPEAT | 重复执行指定次数命令 |
+| CMDTIME | 测量命令执行耗时 |
+| MCSERVER | 模拟运行 MC 服务器 |
+| CLS/CLEAR | 清除屏幕（-n 无标题 / -r / -y 有） |
 | CLSD/CLEARD | 设置清除屏幕默认行为 |
 | COLOR | 设置控制台颜色 |
 | TITLE | 设置控制台标题 |
-| TMPDIR | 设置临时目录 |
-| RESOURCE | 查看/重载资源 |
+| TMPDIR | 设置/查看临时目录 |
+| RESOURCE | 查看加载资源 / 重载资源 |
 | HISTORY | 历史命令 |
-| CONFIG | 显示配置或恢复 |
+| CONFIG | 显示配置或恢复默认配置 |
 | UPDATE | 检查更新 |
-| INFO | 显示脚本信息 |
-| HELP | 查看帮助 |
+| INFO | 显示脚本自身信息 |
+| HELP | 此命令列表（或 /?） |
 | EXIT/EXIT15 | 正常退出 |
 | EXIT9 | 强制退出 |
-| EXITK/KILLSELF | 杀掉自己 |
-| ULIMIT | 限制SHELL |
-| SH | 执行外部SHELL脚本 |
-| C/CMD | 执行系统命令 |
-| ADB | 执行ADB命令 |
+| EXITK/KILLSELF | 杀掉自己以退出 |
+| ULIMIT | 限制 SHELL |
+| SH | 执行外部 SHELL 脚本 |
+| C/CMD | 执行任意系统命令 |
+| ADB | 执行 ADB 命令 |
 | RUNNING | 启动应用程序 |
 | KILL | 终止指定进程 |
 
@@ -142,7 +150,7 @@
 - 交互增强: 上下箭头调用历史命令, HISTORY 命令管理记录(0.06+)
 - 配置保存: 保存你的Color、Title、TMPDIR、Clsd设置
 - 识别你的权限, 给你不同的命令提示符
-- 命令众多, 功能强大, 已超过 230 个开发版本
+- 命令众多, 功能强大
 - Laugh隐藏命令(NO tell you)
 - 关于我的世界的功能和设计
 
@@ -203,7 +211,7 @@ Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
 
 ### 杂七杂八
 
-这个脚本虽然开发了很久(230多个dev), 但是难免会有不足, 遇到任何问题都可以提出, 不喜欢也别喷qwq
+这个脚本虽然开发了很久, 但是难免会有不足, 遇到任何问题都可以提出, 不喜欢也别喷qwq
 
 ### 许可证
 
