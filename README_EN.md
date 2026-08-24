@@ -1,6 +1,6 @@
 # Android CMD
 
-## **English** | [简体中文](README.md)
+## [简体中文](README.md) | **English**
 
 <p align="left">
   <img src="icon.png" alt="Android CMD" width="250">
@@ -16,10 +16,10 @@
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
-An interactive Bash script integrating common运维 (operations), network and system monitoring features (plus jokes), specifically designed to run on Android.
+An interactive Bash script integrating common operations, network and system monitoring features (plus jokes), specifically designed to run on Android.
 
 <details>
-<summary><h2>Commands (91+) Click to expand</h2></summary>
+<summary><h2>Commands (100) Click to expand</h2></summary>
 
 Note: Hidden (laugh) and debug commands are not included.
 
@@ -151,7 +151,7 @@ Note: Hidden (laugh) and debug commands are not included.
 - Interactive enhancements: arrow up/down for command history, `HISTORY` command for management (0.06+)
 - Persistent configuration: saves colour, title, TMPDIR, clear‑screen default settings
 - Detects your privileges and displays different prompt symbols
-- Plenty of commands, powerful functionality
+- Command-rich and powerful
 - Hidden `laugh` command (no tell you)
 - Minecraft‑related features and design
 
@@ -213,11 +213,11 @@ Missing these will prevent the script from starting. Missing other dependencies 
 
 ### Miscellaneous
 
-Although this script has been developed for a long time (230+ dev versions), there may still be shortcomings. Feel free to raise any issues, but please don't flame if you don't like it. 😉
+Although this script has been developed for a long time, there may still be shortcomings. Feel free to raise any issues, but please don't flame if you don't like it. 😉
 
 ### License
 
 MIT License
 Copyright (c) 2026 DC10Xray
 
-https://img.shields.io/badge/Email-3896444757%40qq.com-brightgreen?logo=gmail&logoColor=white
+[![Email](https://img.shields.io/badge/Email-3896444757%40qq.com-brightgreen?logo=gmail&logoColor=white)](mailto:3896444757@qq.com)
