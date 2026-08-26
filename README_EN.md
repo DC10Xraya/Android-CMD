@@ -218,6 +218,5 @@ Although this script has been developed for a long time, there may still be shor
 ### License
 
 MIT License
-Copyright (c) 2026 DC10Xray
 
-[![Email](https://img.shields.io/badge/Email-3896444757%40qq.com-brightgreen?logo=gmail&logoColor=white)](mailto:3896444757@qq.com)
+Copyright (c) 2026 DC10Xray
