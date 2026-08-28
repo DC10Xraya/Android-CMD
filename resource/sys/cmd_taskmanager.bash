@@ -54,9 +54,16 @@ cmd_taskmanager() {
     }
 
     printf "\033[?25l"          # 隐藏光标
-    trap 'printf "\033[?25h"; exit' INT TERM EXIT
 
+    # ---- 保存并重设信号陷阱 ----
+    local old_int_trap=$(trap -p INT)          # 保存旧的 INT 陷阱
     local stop=0
+
+    # 新的 INT 陷阱：仅设置停止标志，不退出整个脚本
+    trap 'stop=1' INT
+    # EXIT 陷阱：只恢复光标，不调用 exit（避免跳出主循环）
+    trap 'printf "\033[?25h"' EXIT
+
     # ---- 记录任务管理器启动时间戳 ----
     local start_time=$($_DATE +%s)
 
@@ -290,6 +297,11 @@ cmd_taskmanager() {
         sleep 0.5
     done
 
+    # ---- 退出前恢复光标和旧陷阱 ----
     printf "\033[?25h"
-    cmd_cls -n
+    # 恢复原先的 INT 陷阱（如果有）
+    eval "$old_int_trap" 2>/dev/null || trap - INT
+    # 清除自定义 EXIT 陷阱，避免干扰
+    trap - EXIT
+    cmd_cls
 }
