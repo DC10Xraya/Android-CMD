@@ -19,7 +19,7 @@
 An interactive Bash script integrating common operations, network and system monitoring features (plus jokes), specifically designed to run on Android.
 
 <details>
-<summary><h2>Commands (100) Click to expand</h2></summary>
+<summary><h2>Commands (109) Click to expand</h2></summary>
 
 Note: Hidden (laugh) and debug commands are not included.
 
@@ -27,95 +27,105 @@ Note: Hidden (laugh) and debug commands are not included.
 | :--- | :--- |
 | COPY/CP | Copy files/directories |
 | CD | Change working directory |
-| RM/DEL | Delete files or directories |
-| RD/RMDIR | Remove empty directories |
-| FIND | Search for string/regex in specified files |
-| MD/MKDIR | Create directories |
-| NEW/TOUCH | Create new file or update file timestamp |
-| MOVE | Move files/directories, or rename (within same directory) |
-| REN | Rename file (same as MOVE) |
+| DD | Copy and convert file |
+| RM/DEL | Delete file or directory |
+| RD/RMDIR | Remove empty directory |
+| FIND | Search for string/regex in files |
+| HEAD | Show first N lines of file |
+| TAIL | Show last N lines of file |
+| MD/MKDIR | Create directory |
+| NEW/TOUCH | Create new file or update timestamp |
+| MOVE | Move or rename files/directories |
+| REN | Rename file |
 | DIR/LS | List directory contents |
-| DU | List directory size |
-| SIZE | List file size |
-| STAT | Show detailed file information |
+| DU | Show directory size |
+| SIZE | Show file size |
+| STAT | Show file details |
 | WC | Count lines, words, characters |
-| CODEWC | Count lines, words, characters in code (BETA) |
+| CODEWC | Count code lines, words, characters (BETA) |
 | LN -s | Create symbolic link |
 | TREE | Display directory tree |
 | TYPE | View text file |
-| MORE | Paginate view text file (no color support) |
-| ZIP | Create ZIP archive (supports recursive directories) |
+| CAT | View text file (system) |
+| MORE | Paginated view (no colour) |
+| ZIP | Create ZIP archive |
 | UNZIP | Extract ZIP archive |
-| NOW | Show current clock |
+| DUMP | Export folder structure to text file |
+| FORMAT | Format storage device (root required) |
+| MOUNT | Mount filesystem (root required) |
+| UMOUNT | Unmount filesystem (root required) |
+| NOW | Show current time |
 | CAL | Show calendar |
-| CLOCK | Real‑time clock (refreshes every 0.1s) |
-| FREE | Show memory usage |
-| DF | Show disk usage |
-| GETPROP | System properties (all when KEY empty, paginated) |
-| ENV/EXPORT | Environment variables (help when no args) |
-| LOGCAT | System log related functions |
+| CLOCK | Real‑time clock (0.1s refresh) |
+| FREE | Memory usage |
+| DF | Disk usage |
+| GETPROP | System properties |
+| ENV/EXPORT | Environment variables |
+| LOGCAT | System log management |
 | PATH | Show PATH variable |
 | UPTIME | System uptime |
-| RES/WM | Display screen info (WM detailed, RES compatible) |
-| BATT | Show battery information |
+| RES/WM | Screen resolution (WM detailed) |
+| BATT | Battery information |
 | SYSTEMINFO | System information |
 | TL/TASKLIST | Process list |
 | TM/TOP/TASKMGR | Task manager |
-| TEMP | Show temperature sensors, thermal throttle status |
-| MONITOR | Real‑time display of time, memory, temperature (~2s refresh) |
-| CPUMONITOR | Real‑time display of each CPU core frequency |
+| TEMP | Temperature sensors & thermal status |
+| MONITOR | Real‑time time/memory/temperature |
+| CPUMONITOR | Real‑time CPU core frequencies |
 | WHOAMI/OP | Show current user UID and privileges |
 | WHICH | Locate command path |
-| DISKC | Test read/write speed of mounted points |
-| DISKT | Test sequential and random read/write speed of storage device |
+| DISKC | Mount point read/write speed test |
+| DISKT | Storage device sequential/random speed test |
 | PWD | Show current working directory |
 | SDIR | Show script directory |
 | SELF | Show current script path |
 | NETSTAT | Network connection statistics |
 | HOSTNAME | Show hostname |
-| DNS | Convert between IPv4 and domain name |
+| DNS | Convert between domain and IP |
 | NETNEIG | Scan local network hosts |
 | FTP | FTP functions |
 | PING | Test network connectivity |
-| SCAN | Scan alive hosts in network |
-| PORTSCAN | Scan alive ports of a specified address |
+| SCAN | Scan alive hosts |
+| PORTSCAN | Scan open ports |
 | DOWNLOAD | Download network file to local |
-| ST/SPEEDTEST | Network speed test (default Cloudflare 10MB, watch data usage) |
-| MCMODDOWNLOAD | Download MC Java mods from Modrinth |
+| ST/SPEEDTEST | Network speed test |
+| MCMODDOWNLOAD | Download MC mods from Modrinth |
 | BASE64/B64 | Base64 encode/decode |
-| SHA256 | Compute SHA256 of file |
-| SHA1 | Compute SHA1 of file |
-| MD5 | Compute MD5 of file |
-| CRC32 | Compute CRC32 of file (cksum) |
-| DIFF | Compare differences between two files/directories |
-| PSD | Generate random password with requirements |
-| RAND | Generate random number (default 4 digits) |
+| SHA256 | Compute SHA256 |
+| SHA1 | Compute SHA1 |
+| MD5 | Compute MD5 |
+| CRC32 | Compute CRC32 |
+| DIFF | Compare files/directories |
+| JSON | Validate JSON format |
+| PSD | Generate random password |
+| RAND | Generate random number |
 | ECHO/PRINT | Display message |
-| PRINTF/ECHO -e | Display message with escaped codes |
-| CECHO | Custom coloured display (ME's own) |
-| ERR | Display error‑style message (red) |
-| YES | Flood screen with content until Ctrl+C |
-| HACK | Brute‑force printable chars until target found |
-| HACK2 | Same as HACK, but using binary search |
+| PRINTF/ECHO -e | Display with escape interpretation |
+| CECHO | Custom coloured display |
+| ERR | Error message (red) |
+| YES | Flood screen until Ctrl+C |
+| HACK | Brute‑force printable chars |
+| HACK2 | Binary‑search brute‑force |
 | AWKC | AWK calculator |
 | BC | Arbitrary precision calculator |
-| TIMER | Countdown / alarm clock |
+| TIMER | Countdown / alarm |
 | SLEEP | Sleep for specified seconds |
-| WATCH | Execute command repeatedly at interval, clearing screen |
-| REPEAT | Repeat command specified number of times |
-| CMDTIME | Measure execution time of a command |
-| MCSERVER | Simulate running a MC server |
-| CLS/CLEAR | Clear screen (-n no title / -r / -y yes) |
-| CLSD/CLEARD | Set default clear screen behaviour |
-| COLOR | Set console colours |
-| TITLE | Set console title |
+| WATCH | Execute command periodically (clear screen) |
+| REPEAT | Repeat command N times |
+| CMDTIME | Measure command execution time |
+| MCSERVER | Simulate MC server running |
+| FUN/FUNCTION | Define temporary function (lost on restart) |
+| CLS/CLEAR | Clear screen |
+| CLSD/CLEARD | Set default clear behaviour |
+| COLOR | Set console colour |
+| TITLE | Set terminal title |
 | TMPDIR | Set/view temporary directory |
-| RESOURCE | View loaded resources / reload resources |
+| RESOURCE | View/reload resources |
 | HISTORY | Command history management |
-| CONFIG | Show configuration or restore defaults |
+| CONFIG | Show or restore default config |
 | UPDATE | Check for updates |
 | INFO | Show script information |
-| HELP | This command list (or /?) |
+| HELP | Show this help (or /?) |
 | EXIT/EXIT15 | Normal exit |
 | EXIT9 | Force exit |
 | EXITK/KILLSELF | Kill self to exit |
