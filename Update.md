@@ -1,3 +1,17 @@
+2026-08-28 / 0.15(dev247)
+1. 增加:
+DUMP    -扁平化文件夹结构(所有内容导出到TXT)
+FUN/FUNCTION  -临时定义函数
+JSON          -检验JSON/JSON5(JQ/PY/BASH)
+CAT           -系统的cat(查看文本)
+HEAD/TAIL     -显示文件开头或结尾N行, 支持系统选项
+DD            -复制并转换文件(系统)
+FORMAT        -格式化存储(包装)
+MOUNT         -挂载文件系统
+UMOUNT        -卸载文件系统
+2. 移除了C的炸弹检测, FORK BOMB被移除
+3. TASKMAG现在支持^C退出, 原来的ESC仍然生效
+
 2026-08-24 / 0.14(dev241)
 1. 增加:
 CODEWC  -统计纯文本编程语言的有效行数、单词数和字符数(自动忽略注释和空行)(BETA)

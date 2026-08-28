@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.14 (dev0.241)"
+CMD_VER="0.14 (dev0.247)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -977,7 +977,7 @@ cmd_history() {
             fi
             ;;
         -h|--help)
-            cecho -b "用法: HISTORY [选项]"
+            cecho -b "用法: HISTORY [参数]"
             cecho "  -c, --clear    清除所有历史记录"
             cecho "  -n, --num N    显示最近 N 条历史 (默认10)"
             cecho "  -p, --path     显示历史文件路径"
@@ -1071,11 +1071,14 @@ $CMD_delimiter
 //cecho -c 93 "若参数包含空格, 用双引号或者单引号包裹即可"
   COPY/CP [源...] [目标]    复制文件/目录 ⤸
   -(支持多个源,目标为目录时复制到目录下)
-  CD                        修改工作目录
+  CD [目录]                 修改工作目录
+  DD [参数]                 复制并转换文件(系统)
   RM/DEL [文件]             删除文件或目录
   RD/RMDIR [目录]           删除空目录
   FIND <关键词/正则表达式> <文件1> [文件2...] ⤸
   -在指定文件中搜索字符串/正则表达式
+  HEAD [-n N] [参数] <文件>  显示文件开头N行(系统)
+  TAIL [-n N] [参数] <文件>  显示文件结尾N行(系统)
   MD/MKDIR [目录]           创建目录
   NEW/TOUCH <文件>          创建新文件或者更新文件时间
   MOVE [源...] [目标]       移动文件/目录,或重命名(同目录下)
@@ -1084,15 +1087,20 @@ $CMD_delimiter
   DU [目录]                 列出目录大小
   SIZE [文件]               列出文件大小
   STAT <文件>               显示文件的详细信息
-  WC [选项] [文件...]       统计行数、单词数、字符数
-  CODEWC [选项] [文件...]   统计代码的行数、单词数、字符数(BETA)
+  WC [参数] [文件...]       统计行数、单词数、字符数
+  CODEWC [参数] [文件...]   统计代码的行数、单词数、字符数(BETA)
   LN -s <源> <目标>         创建软链接(符号链接)
-  TREE [选项] [路径]        显示目录树
+  TREE [参数] [路径]        显示目录树
   TYPE [文件]               查看文本文件
+  CAT [参数] <1> [2...]     更高级的查看文本文件(系统)
   MORE < 文件               分页查看文本文件(不支持颜色)
   ZIP <输出文件> <源文件/目录> [-f 格式] [-l 级别] ⤸
   -创建 ZIP 压缩包(支持目录递归)
   UNZIP <压缩包> [-d 目标]    解压 ZIP 压缩包
+//cecho -c 31 -b "需要root权限:"
+  FORMAT <设备路径> [文件系统类型]    格式化存储设备
+  MOUNT <设备> <挂载点> [参数]        挂载文件系统
+  UMOUNT <设备或挂载点>               卸载文件系统
 
 //cecho -b "系统信息"
   NOW             显示当前时钟
@@ -1141,7 +1149,8 @@ $CMD_delimiter
   SHA1 -d <字符串>/-f <文件>             计算文件的SHA1
   MD5 <文件>                计算文件的MD5
   CRC32 <文件>              计算文件的CRC32(cksum)
-  DIFF [选项] <1> <2>       比较两个文件/目录的差异
+  DIFF [参数] <1> <2>       比较两个文件/目录的差异
+  JSON -w/[参数] <目标>   检验JSON有效性(需要jq/py/bash)
   PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集] ⤸
   -生成符合要求的随机密码
   RAND [长度]               生成随机数(默认四位数)
@@ -1152,6 +1161,7 @@ $CMD_delimiter
   CECHO [参数] [消息]     ME自定义的显示消息
   ERR [消息]              显示错误样式消息(红色)
   YES [内容]              刷屏某一内容直至按下Ctrl+C
+  DUMP <目标> [输出]      扁平化文件夹结构(所有内容导出到TXT)
   HACK <目标>             穷举可打印字符直到找到目标
   HACK2 <目标>            同上,但是使用二分法
   AWKC <表达式>/<无参数进入交互>           AWK计算器
@@ -1178,9 +1188,10 @@ $CMD_delimiter
   EXIT9                         强制退出
   EXITK/KILLSELF                杀掉自己以退出
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
-  ULIMIT [选项] [限制值]        限制SHELL
+  ULIMIT [参数] [限制值]        限制SHELL
   SH <脚本路径> [参数]          执行外部 SHELL 脚本
   C/CMD <系统命令> [参数]       执行任意系统命令
+  FUN/FUNCTION [函数体]         临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
   KILL [-9/-15/-2] <PID>        终止指定进程
@@ -1306,7 +1317,7 @@ cmd_echo() {
     # 显示帮助
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
         cecho -b "用法: ECHO [-e] [-n] [消息]"
-        cecho -b "支持选项:"
+        cecho -b "支持参数:"
         cecho "  -e       启用转义字符解析(如 \\n, \\t)"
         cecho "  -n       不换行输出"
         cecho "  -en/-ne  同时启用 -e 和 -n"
@@ -1315,7 +1326,7 @@ cmd_echo() {
 
     local opts=()
     local args=()
-    # 解析选项(仅支持 -e、-n、-en、-ne)
+    # 解析参数(仅支持 -e、-n、-en、-ne)
     while [ $# -gt 0 ]; do
         case "$1" in
             -e) opts+=("-e"); shift ;;
@@ -1356,8 +1367,8 @@ cmd_cecho() {
     # 显示帮助
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
 
-cecho -b "用法: CECHO [选项] [消息]"
-cecho -b "选项:"
+cecho -b "用法: CECHO [参数] [消息]"
+cecho -b "参数:"
 ccat << "EOF"
 -n              不换行
 -c <颜色>       设置前景色 (数字颜色码或十六进制码)
@@ -1389,13 +1400,13 @@ EOF
             -n) opt_n=true; shift ;;
             -c)
                 if [ $# -lt 2 ]; then
-                    err "选项 -c 需要指定颜色值"
+                    err "参数 -c 需要指定颜色值"
                     return 1
                 fi
                 custom_fg="$2"; shift 2 ;;
             -cb)
                 if [ $# -lt 2 ]; then
-                    err "选项 -cb 需要指定颜色值"
+                    err "参数 -cb 需要指定颜色值"
                     return 1
                 fi
                 custom_bg="$2"; shift 2 ;;
@@ -1406,7 +1417,7 @@ EOF
             -r) plain=1; shift ;;
             --) shift; break ;;
             -*)
-                err "未知选项: $1"
+                err "未知参数: $1"
                 return 1
                 ;;
             *) break ;;
@@ -1632,6 +1643,403 @@ cmd_move() {
 cmd_free() {
     $_FREE -h 2>&1 | while IFS= read -r line; do cecho "$line"; done
 }
+
+# 0.15NEW
+# ---------- cat ----------
+cmd_cat() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: CAT [参数] <文件1> [文件2...]"
+        cecho "查看文件内容, 支持标准 cat 参数"
+        return 0
+    fi
+    local has_file=0
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            has_file=1
+            break
+        fi
+    done
+    if [ $has_file -eq 0 ]; then
+        err "缺少文件参数, 使用 CAT -h 查看帮助"
+        return 1
+    fi
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            if [ ! -f "$arg" ] && [ ! -c "$arg" ] && [ ! -b "$arg" ]; then
+                err "文件不存在或不是普通文件: $arg"
+                return 1
+            fi
+            if [ ! -r "$arg" ]; then
+                err "文件不可读: $arg"
+                return 1
+            fi
+        fi
+    done
+    if command -v cat >/dev/null 2>&1; then
+        command cat "$@" 2>/dev/null | while IFS= read -r line; do
+            cecho "$line"
+        done
+        local ret=${PIPESTATUS[0]}
+        if [ $ret -ne 0 ]; then
+            err "cat 执行失败(错误码 $ret)"
+            return $ret
+        fi
+    else
+        err "系统 cat 命令未找到"
+        return 127
+    fi
+}
+
+# ---------- head ----------
+cmd_head() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: HEAD [-n N] [参数] <文件>"
+        cecho "显示文件开头 N 行(默认10行)"
+        return 0
+    fi
+    local has_file=0
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            has_file=1
+            break
+        fi
+    done
+    if [ $has_file -eq 0 ]; then
+        err "缺少文件参数, 使用 HEAD -h 查看帮助"
+        return 1
+    fi
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            if [ ! -f "$arg" ]; then
+                err "文件不存在: $arg"
+                return 1
+            fi
+            if [ ! -r "$arg" ]; then
+                err "文件不可读: $arg"
+                return 1
+            fi
+        fi
+    done
+    if command -v head >/dev/null 2>&1; then
+        command head "$@" 2>/dev/null | while IFS= read -r line; do
+            cecho "$line"
+        done
+        local ret=${PIPESTATUS[0]}
+        if [ $ret -ne 0 ]; then
+            err "head 执行失败(错误码 $ret)"
+            return $ret
+        fi
+    else
+        err "系统 head 命令未找到"
+        return 127
+    fi
+}
+
+# ---------- tail ----------
+cmd_tail() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: TAIL [-n N] [参数] <文件>"
+        cecho "显示文件末尾 N 行(默认10行)"
+        return 0
+    fi
+    local has_file=0
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            has_file=1
+            break
+        fi
+    done
+    if [ $has_file -eq 0 ]; then
+        err "缺少文件参数, 使用 TAIL -h 查看帮助"
+        return 1
+    fi
+    for arg in "$@"; do
+        if [[ "$arg" != -* ]]; then
+            if [ ! -f "$arg" ]; then
+                err "文件不存在: $arg"
+                return 1
+            fi
+            if [ ! -r "$arg" ]; then
+                err "文件不可读: $arg"
+                return 1
+            fi
+        fi
+    done
+    if command -v tail >/dev/null 2>&1; then
+        command tail "$@" 2>/dev/null | while IFS= read -r line; do
+            cecho "$line"
+        done
+        local ret=${PIPESTATUS[0]}
+        if [ $ret -ne 0 ]; then
+            err "tail 执行失败(错误码 $ret)"
+            return $ret
+        fi
+    else
+        err "系统 tail 命令未找到"
+        return 127
+    fi
+}
+
+# ---------- dd ----------
+cmd_dd() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: DD [参数]"
+        cecho "复制并转换文件(危险)"
+        return 0
+    fi
+    if [ $# -eq 0 ]; then
+        err "缺少参数, 使用 DD -h 查看帮助"
+        return 1
+    fi
+    local has_if=0 has_of=0
+    for arg in "$@"; do
+        [[ "$arg" == if=* ]] && has_if=1
+        [[ "$arg" == of=* ]] && has_of=1
+    done
+    if [ $has_if -eq 0 ] || [ $has_of -eq 0 ]; then
+        err "至少需要指定 if= 和 of= 参数"
+        return 1
+    fi
+    if ! confirm "执行 dd 命令可能损坏数据, 确认继续吗"; then
+        return 0
+    fi
+    if command -v dd >/dev/null 2>&1; then
+        dd "$@"
+        local ret=$?
+        if [ $ret -ne 0 ]; then
+            err "dd 执行失败(错误码 $ret)"
+        else
+            cecho "dd 执行完成"
+        fi
+        return $ret
+    else
+        err "dd 命令未找到"
+        return 127
+    fi
+}
+
+# ---------- MOUNT：挂载文件系统 ----------
+cmd_mount() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 2 ]; then
+        cecho -b "用法: MOUNT <设备> <挂载点> [参数]"
+        cecho "挂载文件系统(通常需要 root 权限)"
+        cecho "示例: MOUNT /dev/block/sda1 /mnt/usb"
+        return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        err "挂载操作需要 root 权限"
+        return 1
+    fi
+
+    local device="$1"
+    local mountpoint="$2"
+    shift 2
+    local opts="$*"
+
+    if [ ! -b "$device" ] && [ ! -c "$device" ]; then
+        err "设备不存在或不是块/字符设备: $device"
+        return 1
+    fi
+
+    # 检查挂载点是否存在
+    if [ ! -d "$mountpoint" ]; then
+        if ! confirm "挂载点 $mountpoint 不存在, 是否创建"; then
+            cecho "已取消"
+            return 0
+        fi
+        mkdir -p "$mountpoint" || { err "无法创建挂载点"; return 1; }
+    fi
+
+    # 检查设备是否已经挂载
+    if mount | grep -q "^$device "; then
+        err "设备 $device 已经挂载"
+        return 1
+    fi
+
+    if ! confirm "确定要挂载 $device 到 $mountpoint 吗"; then
+        cecho "已取消"
+        return 0
+    fi
+
+    mount "$device" "$mountpoint" $opts
+    local ret=$?
+    if [ $ret -eq 0 ]; then
+        cecho "挂载成功"
+    else
+        err "挂载失败(错误码 $ret)"
+    fi
+    return $ret
+}
+
+# ---------- UMOUNT：卸载文件系统 ----------
+cmd_umount() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -eq 0 ]; then
+        cecho -b "用法: UMOUNT <设备或挂载点>"
+        cecho "卸载文件系统(通常需要 root 权限)"
+        cecho "示例: UMOUNT /mnt/usb  或  UMOUNT /dev/block/sda1"
+        return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        err "卸载操作需要 root 权限"
+        return 1
+    fi
+
+    local target="$1"
+
+    # 检查目标是否已挂载
+    if ! mount | grep -q " $target " && ! mount | grep -q "^$target "; then
+        err "未找到挂载点或设备: $target"
+        return 1
+    fi
+
+    if ! confirm "确定要卸载 $target 吗?"; then
+        cecho "已取消"
+        return 0
+    fi
+
+    umount "$target"
+    local ret=$?
+    if [ $ret -eq 0 ]; then
+        cecho "卸载成功"
+    else
+        err "卸载失败(错误码 $ret)"
+    fi
+    return $ret
+}
+
+# ---------- FORMAT：格式化存储设备 ----------
+cmd_format() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: FORMAT <设备路径> [文件系统类型]"
+        cecho "格式化存储设备(危险操作, 所有数据将被清除)"
+        cecho "支持的文件系统类型(根据系统工具自动检测)："
+        cecho "  vfat, ext4, f2fs, ntfs, exfat 等"
+        cecho "示例: FORMAT /dev/block/mmcblk1p1 ext4"
+        cecho "      FORMAT /dev/block/sda1         # 将交互选择类型"
+        return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        err "格式化操作需要 root 权限"
+        return 1
+    fi
+
+    if [ $# -lt 1 ]; then
+        err "缺少设备路径参数, 使用 FORMAT -h 查看帮助"
+        return 1
+    fi
+
+    local device="$1"
+    local fstype="$2"
+
+    if [ ! -b "$device" ] && [ ! -c "$device" ]; then
+        err "设备不存在或不是块/字符设备: $device"
+        return 1
+    fi
+
+    # 检查设备是否已挂载
+    local mount_point=$(mount | grep -E "^$device " | awk '{print $3}' | head -1)
+    if [ -n "$mount_point" ]; then
+        err "设备 $device 已挂载到 $mount_point, 请先卸载"
+        err "使用: UMOUNT $device"
+        return 1
+    fi
+
+    # 检测可用的格式化工具
+    local tools=()
+    local tool_map=()
+    local candidates=(
+        "mkfs.vfat:vfat"
+        "mkfs.ext4:ext4"
+        "mkfs.f2fs:f2fs"
+        "mkfs.ntfs:ntfs"
+        "mkfs.exfat:exfat"
+        "make_ext4fs:ext4"
+        "mke2fs:ext4"
+    )
+    for entry in "${candidates[@]}"; do
+        local tool="${entry%:*}"
+        local type="${entry#*:}"
+        if command -v "$tool" >/dev/null 2>&1; then
+            tools+=("$tool")
+            tool_map["$tool"]="$type"
+        fi
+    done
+
+    if [ ${#tools[@]} -eq 0 ]; then
+        err "未找到任何可用的格式化工具(mkfs.* 或 make_ext4fs)"
+        return 127
+    fi
+
+    # 确定文件系统类型
+    local selected_tool=""
+    if [ -z "$fstype" ]; then
+        cecho "可用的文件系统类型："
+        local idx=1
+        local type_list=()
+        for t in "${tools[@]}"; do
+            local label="${tool_map[$t]}"
+            cecho "  $idx) $label (工具: $t)"
+            type_list+=("$t")
+            ((idx++))
+        done
+        echo ""
+        read -p "请选择编号 (1-${#type_list[@]}): " choice
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#type_list[@]}" ]; then
+            err "无效选择"
+            return 1
+        fi
+        selected_tool="${type_list[$((choice-1))]}"
+        fstype="${tool_map[$selected_tool]}"
+    else
+        local found=0
+        for entry in "${candidates[@]}"; do
+            local tool="${entry%:*}"
+            local type="${entry#*:}"
+            if [ "$type" == "$fstype" ] && command -v "$tool" >/dev/null 2>&1; then
+                found=1
+                selected_tool="$tool"
+                break
+            fi
+        done
+        if [ $found -eq 0 ]; then
+            err "不支持的文件系统类型 '$fstype' 或未找到对应工具"
+            return 1
+        fi
+    fi
+
+    # 最终确认
+    cecho -c 31 -b "警告：将格式化设备 $device, 所有数据将永久丢失!"
+    echo ""
+    if ! confirm "确认格式化操作?一旦开始则不可终止"; then
+        return 0
+    fi
+
+    # 执行格式化
+    cecho "正在格式化 $device 为 $fstype ..."
+    local cmd=""
+    case "$selected_tool" in
+        mkfs.vfat)   cmd="$selected_tool -F 32 $device" ;;
+        mkfs.ext4|mke2fs) cmd="$selected_tool -F $device" ;;
+        mkfs.f2fs)   cmd="$selected_tool -f $device" ;;
+        mkfs.ntfs)   cmd="$selected_tool -f -Q $device" ;;
+        mkfs.exfat)  cmd="$selected_tool -f $device" ;;
+        make_ext4fs) cmd="$selected_tool $device" ;;
+        *) err "未知工具 $selected_tool"; return 1 ;;
+    esac
+
+    if eval "$cmd"; then
+        cecho -c 92 "格式化成功完成"
+        return 0
+    else
+        local ret=$?
+        err "格式化失败(错误码 $ret)"
+        return $ret
+    fi
+}
+# 0.15NEW Finish
 
 cmd_cpumonitor() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -1914,12 +2322,12 @@ cmd_clock() {
 
 cmd_ulimit() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    err "此汉化帮助可能和您的系统选项不同, 仅供参考, 更多信息请使用ULIMIT -a"
+    err "此汉化帮助可能和您的系统参数不同, 仅供参考, 更多信息请使用ULIMIT -a"
         ccat << "EOF"
-//cecho -b "用法: ULIMIT [选项] [限制值]"
+//cecho -b "用法: ULIMIT [参数] [限制值]"
 显示或设置当前 Shell 进程的资源限制
 
-//cecho -b "选项:"
+//cecho -b "参数:"
   -a              显示所有当前限制
   -S              软限制 (默认)
   -H              硬限制
@@ -1951,7 +2359,7 @@ EOF
     ulimit "$@"
     local ret=$?
     if [[ $ret -ne 0 ]]; then
-        err "无效选项或参数"
+        err "无效参数或参数"
     fi
     return $ret
 }
@@ -2426,13 +2834,13 @@ cmd_find() {
 
 cmd_wc() {
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 1 ]; then
-        cecho -b "用法: WC [选项] [文件...]"
+        cecho -b "用法: WC [参数] [文件...]"
         cecho "统计行数、单词数、字符数"
-        cecho "选项: 与系统WC相同, 输出美化"
+        cecho "参数: 与系统WC相同, 输出美化"
         return 0
     fi
 
-    # 如果参数中含有标准 wc 的短选项, 直接原样执行并输出
+    # 如果参数中含有标准 wc 的短参数, 直接原样执行并输出
     local has_short_opts=0
     for arg in "$@"; do
         if [[ "$arg" =~ ^-[lwcmL] ]]; then
@@ -2447,7 +2855,7 @@ cmd_wc() {
         return $?
     fi
 
-    # 无选项或仅有文件:美化输出
+    # 无参数或仅有文件:美化输出
     if [ $# -eq 0 ]; then
         # 无文件, 从标准输入读取
         local data=$(cat)
@@ -2473,9 +2881,9 @@ cmd_wc() {
 
 cmd_diff() {
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -lt 2 ]; then
-        cecho -b "用法: DIFF [选项] <1> <2>"
+        cecho -b "用法: DIFF [参数] <1> <2>"
         cecho "比较两个文件/目录的差异"
-        cecho "选项: 与系统diff相同, 输出美化"
+        cecho "参数: 与系统diff相同, 输出美化"
         return 0
     fi
 
@@ -2532,7 +2940,7 @@ cmd_tree() {
     local show_dir_size=0
     local path="."
 
-    # 解析选项
+    # 解析参数
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -d) show_dirs_only=1; shift ;;
@@ -2546,8 +2954,8 @@ cmd_tree() {
                 ;;
             -s) show_size=1; shift ;;
             -h|--help)
-                cecho -b "用法: TREE [选项] [路径]"
-                cecho "选项:"
+                cecho -b "用法: TREE [参数] [路径]"
+                cecho "参数:"
                 cecho "  -d          只显示目录"
                 cecho "  -L <深度>   限制递归深度"
                 cecho "  -a          显示目录的总大小"
@@ -2703,36 +3111,22 @@ cmd_adb() {
 }
 
 cmd_cmd() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
         cecho -b "用法: C/CMD <系统命令> [参数]"
         cecho "示例: C/CMD ls -l"
         return 0
     fi
-    local force=0
-    if [ "$1" = "--force" ]; then
-        force=1; shift
-    fi
+
     if [ $# -eq 0 ]; then
         err "用法: C/CMD <系统命令> [参数]"
         return 1
     fi
-    local raw_cmd="$*"
-    if [ $force -eq 0 ]; then
-        local compact=$(printf "%s" "$raw_cmd" | tr -d '[[:space:]]"' | tr -d "'")
-        if [[ "$compact" == *":(){"* && "$compact" == *":|:&"* ]]; then
-            err "检测到你的命令貌似是个炸弹!"
-            cecho "如果你确认这不危险,并想执行, 请使用 --force 参数强制执行"
-            cecho "如果误判了你的安全命令, 请向作者反馈"
-            echo ""
-            return 0
-        fi
-    else
-        err "警告: 已跳过炸弹检测"
-    fi
+
     if ! confirm "确认要执行这个命令吗?(请确认命令是否安全!)"; then
         echo ""
         return 0
     fi
+
     local old_trap=$(trap -p INT)
     local child_pid=""
     local interrupted=0
@@ -2742,6 +3136,7 @@ cmd_cmd() {
     wait "$child_pid"
     local exit_code=$?
     eval "$old_trap" 2>/dev/null || trap - INT
+
     if [ $interrupted -eq 1 ]; then
         echo ""
         cecho "命令被中断"
@@ -2754,6 +3149,46 @@ cmd_cmd() {
         echo ""
         cecho "命令执行完毕"
         return 0
+    fi
+}
+
+cmd_fun() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: FUN [函数体]"
+        cecho "  无参数     进入交互模式(多行输入, Ctrl+D 结束)"
+        cecho "  有参数     直接将参数作为函数体定义(单行)"
+        cecho "示例: hello() { echo 'Hello'; }"
+        err "如果你输入的函数名已为内置命令, 那么内置命令会被覆盖"
+        return 0
+    fi
+
+    local func_body=""
+    if [ $# -eq 0 ]; then
+        cecho "输入函数体(按 Ctrl+D 结束):"
+        func_body=$(cat)
+    else
+        # 直接使用参数作为函数体
+        func_body="$*"
+    fi
+
+    if [ -z "$func_body" ]; then
+        err "未输入任何内容"
+        return 1
+    fi
+
+    # 尝试定义函数
+    if eval "$func_body" 2>/dev/null; then
+        # 提取函数名(支持 function name {} 和 name() {}
+        local func_name
+        func_name=$(echo "$func_body" | grep -oE '^[[:space:]]*(function[[:space:]]+)?([a-zA-Z_][a-zA-Z0-9_]*)' | head -1 | awk '{print $NF}')
+        if [ -n "$func_name" ] && type -t "$func_name" >/dev/null 2>&1; then
+            cecho "函数 '$func_name' 已定义, 可通过 '$func_name' 调用"
+        else
+            cecho "函数定义已加载, 可通过函数名调用"
+        fi
+    else
+        err "函数定义失败, 请检查语法"
+        return 1
     fi
 }
 
@@ -3183,6 +3618,9 @@ while true; do
     touch|new)         cmd_touch "${args_array[@]}" ;;
     move|ren|rename)   cmd_move "${args_array[@]}" ;;
     rd|rmdir)          cmd_rd "${args_array[@]}" ;;
+    head|h)            cmd_head "${args_array[@]}" ;;
+    tail|t)            cmd_tail "${args_array[@]}" ;;
+    dd|diskdd)         cmd_dd "${args_array[@]}" ;;
     now|date|time|datetime)  cecho "$($_DATE "+%Y-%m-%d %H:%M:%S (%A)")" ;;
     env|export)        cmd_env "${args_array[@]}" ;;
     systeminfo|sysinfo)  cmd_systeminfo ;;
@@ -3196,6 +3634,7 @@ while true; do
     cmdinfo|info)      cmd_cmdinfo ;;
     ctrl+c)            cmd_exit15_0 ;;
     c|cmd)             cmd_cmd "${args_array[@]}" ;;
+    fun|function)      cmd_fun "${args_array[@]}" ;;
     # ---------- 显式调用 ----------
     df)                $_DF -h 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
     path)              cecho "$PATH" ;;
@@ -3242,14 +3681,20 @@ while true; do
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 ;;
-    # ---------- 懒惰加载 / 未知命令 ----------
+    # ----------自定义函数 / 懒惰加载 / 未知命令 ----------
     *)
+    # 优先执行用户自定义函数
+    if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
+        "$cmd" "${args_array[@]}"
+    else
+        # 否则尝试加载资源文件中的函数
         if lazy_load "$cmd"; then
             "cmd_$cmd" "${args_array[@]}"
         else
             err "$cmd: 命令未找到"
         fi
-        ;;
+    fi
+    ;;
 esac
 done
 #null
