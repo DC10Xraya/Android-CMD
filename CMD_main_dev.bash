@@ -1150,8 +1150,8 @@ $CMD_delimiter
   MD5 <文件>                计算文件的MD5
   CRC32 <文件>              计算文件的CRC32(cksum)
   DIFF [参数] <1> <2>       比较两个文件/目录的差异
-  ZIPDUFF [参数] <源> <新>   比较两个ZIP文件的差异
-  JSON -w/[参数] <目标>   检验JSON有效性(需要jq/py/bash)
+  ZIPDUFF [参数] <源> <新>  比较两个ZIP文件的差异
+  JSON -w/[参数] <目标>     检验JSON有效性(需要jq/py/bash)
   PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集] ⤸
   -生成符合要求的随机密码
   RAND [长度]               生成随机数(默认四位数)
