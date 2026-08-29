@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.14 (dev0.247)"
+CMD_VER="0.15.1 (dev0.249)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -1150,6 +1150,7 @@ $CMD_delimiter
   MD5 <文件>                计算文件的MD5
   CRC32 <文件>              计算文件的CRC32(cksum)
   DIFF [参数] <1> <2>       比较两个文件/目录的差异
+  ZIPDUFF [参数] <源> <新>   比较两个ZIP文件的差异
   JSON -w/[参数] <目标>   检验JSON有效性(需要jq/py/bash)
   PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集] ⤸
   -生成符合要求的随机密码
@@ -3445,16 +3446,22 @@ fi
 # ---------- 版本更新检查 ----------
 # 从字符串中提取版本号
 _extract_ver() {
-    echo "$1" | grep -oE '[0-9]+\.[0-9]+' | head -1
+    echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
 }
 # 比较两个版本号, 如果 v1 >= v2 返回 0(真), 否则返回 1
 _ver_ge() {
-    local v1="$1" v2="$2"
-    local major1=${v1%%.*} minor1=${v1##*.}
-    local major2=${v2%%.*} minor2=${v2##*.}
-    if [ "$major1" -gt "$major2" ]; then return 0; fi
-    if [ "$major1" -lt "$major2" ]; then return 1; fi
-    if [ "$minor1" -ge "$minor2" ]; then return 0; else return 1; fi
+    # 比较两个版本号（如 0.15.1 和 0.15），返回 0 表示 v1 >= v2
+    local v1=($(echo "$1" | tr '.' ' '))
+    local v2=($(echo "$2" | tr '.' ' '))
+    local len1=${#v1[@]} len2=${#v2[@]}
+    local max_len=$(( len1 > len2 ? len1 : len2 ))
+    for ((i=0; i<max_len; i++)); do
+        local a=${v1[i]:-0}   # 若缺失则视为 0
+        local b=${v2[i]:-0}
+        if (( a > b )); then return 0; fi
+        if (( a < b )); then return 1; fi
+    done
+    return 0  # 相等
 }
 _get_latest_ver() {
     local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
