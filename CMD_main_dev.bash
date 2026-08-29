@@ -3658,7 +3658,6 @@ while true; do
     debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug)
         err "调试模式还在设计中(真的吗?)" ;;
     debug___|debug_help_|help_debug_)  debug_help ;;
-    debug_0)  debug_0 "${args_array[@]}" ;;
     debug_1)  cmd_resource load -debug "${args_array[@]}" ;;
     debug_2|debug_line)  debug_2 ;;
     $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
@@ -3676,18 +3675,17 @@ while true; do
     wtf2)
         lazy_load "hack2" # 预加载依赖
         lazy_load "laugh_wtf2" && cmd_laugh_wtf2 ;;
-    netneig|netneighbor)  
+    netneig|netneigh|netneighbor)  
         lazy_load "scan"  # 预加载依赖
         lazy_load "netneig" && cmd_netneig ;;
-    cmd_bomb_fork|bomb_fork|fork_bomb) lazy_load "bomb_fork" && cmd_bomb_fork ;;
     # ---------- 资源目录别名 ----------
-    codewc|wccode) lazy_load "codewc" && cmd_codewc ;;
+    codewc|wccode) lazy_load "codewc" && cmd_codewc "${args_array[@]}" ;;
     whoami|op) lazy_load "whoami_op" && cmd_whoami_op ;;
     b64)       lazy_load "base64" && cmd_base64 "${args_array[@]}" ;;
     st)       lazy_load "speedtest" && cmd_speedtest ;;
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
-    sha256|sha256sum) lazy_load "sha256" && cmd_sha256 ;;
-    sha1|sha1sum) lazy_load "sha1" && cmd_sha1 ;;
+    sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
+    sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
     # ----------自定义函数 / 懒惰加载 / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
