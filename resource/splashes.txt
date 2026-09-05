@@ -6,7 +6,6 @@ try laugh command
 §331145141919810
 §92Also try Minecraft!
 Also try cmd.exe on Windows!
-这不是bash函数.mcfunction
 cmd_Iamfunction () {}
 §31null
 <splashes.txt>
@@ -17,37 +16,27 @@ command not found
 loss resource with cmd_your_mind
 (Experimental Feature)
 How to made #(root)/$(adb)?
-CMD_main_dev.bash
-err "(错误文字)"
 Q:很难想象,没朋友的人怎么解压 A:Win-RAR
 嗯哼哼哼!啊啊啊啊!啊啊啊啊哈哈呃!哼!哼!~
 2026-07-20
 YES YES YES?
 野兽先辈的命令臭死符 [版本:114514.1919810]
 echo "Hello World"#问:这段代码的输出是什么?
-lang:简体中文(其他的我没做)
 Bash VS Space
 8000Line+ Bash VS Brainfuck
 来自 127.0.0.1 的回复: 数据=不要再Ping了
 Try listen 《title.wma》
-#!/bin/bash
-Let's go～
+#!/bin/dcsh
+Let's go ~
 hey yo chillllllllllll！
-2001-10-25 00:00:00
-wtf
-wtf2
+wtffffffffff!
 调试模式还在设计中(真的吗?)
-debug?
-color 0a
 <莫名其妙>
 Lazy,lazy,lazy!
 Please Enter text
 Do you know?I don't know!
 ABCD egg hunt(wha)
-I WILL DEL YOUR /data(危险)
-I WILL DEL YOUR /system(危险)
-I WILL DEL YOUR /storage/emulated(请勿模仿)
-I WILL rm -rf /(危险)
+§31I WILL DEL YOUR /data
 禁止使用中文标点符号(
 History is very important
 §31☒☒☒☒☒☒?
@@ -55,4 +44,5 @@ OHHHHHHH
 Oh My Phoneeeeeeeeeee!!!
 PATH:😡😡😡
 https://github.com/DC10Xraya/Android-CMD
-mcserver
+☠️☠️☠️
+No Way
