@@ -4,7 +4,7 @@ cmd_dns() {
         cecho -b "用法: DNS <域名/IPv4地址>"
         cecho "  正向解析: 输入域名, 显示对应 IPv4 地址"
         cecho "  反向解析: 输入 IPv4 地址, 显示对应域名"
-        err "  (若没有反向解析工具, 将会使用阿里云 API)"
+        err "  (若没有反向解析工具, 将会使用阿里云 API 或 Cloudflare DoH)"
         cecho "示例:"
         cecho "  DNS google.com"
         cecho "  DNS 8.8.8.8"
@@ -56,6 +56,20 @@ cmd_dns() {
             fi
         fi
 
+        # 3. 阿里云也失败 → 尝试 Cloudflare DoH(备用)
+        if [ -z "$result" ]; then
+            if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+                local reverse=$(echo "$target" | awk -F. '{print $4"."$3"."$2"."$1".in-addr.arpa"}')
+                local json=""
+                if command -v curl >/dev/null 2>&1; then
+                    json=$(curl -s --connect-timeout 3 -H "accept: application/dns-json" "https://cloudflare-dns.com/dns-query?name=$reverse&type=PTR" 2>/dev/null)
+                else
+                    json=$(wget -qO- --timeout=3 --header="accept: application/dns-json" "https://cloudflare-dns.com/dns-query?name=$reverse&type=PTR" 2>/dev/null)
+                fi
+                result=$(echo "$json" | grep -o '"data":"[^"]*"' | head -1 | sed 's/"data":"//; s/"//')
+            fi
+        fi
+
         if [ -n "$result" ]; then
             cecho "$result"
         else
@@ -98,6 +112,20 @@ cmd_dns() {
                 return 1
             fi
         fi
+
+# 3. 阿里云也失败 → 尝试 Cloudflare DoH
+if [ -z "$result" ]; then
+    if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+        local reverse=$(echo "$target" | awk -F. '{print $4"."$3"."$2"."$1".in-addr.arpa"}')
+        local json=""
+        if command -v curl >/dev/null 2>&1; then
+            json=$(curl -s --connect-timeout 3 -H "accept: application/dns-json" "https://cloudflare-dns.com/dns-query?name=$reverse&type=PTR" 2>/dev/null)
+        else
+            json=$(wget -qO- --timeout=3 --header="accept: application/dns-json" "https://cloudflare-dns.com/dns-query?name=$reverse&type=PTR" 2>/dev/null)
+        fi
+        result=$(echo "$json" | grep -o '"Answer":\[[^]]*\]' | grep -o '"data":"[^"]*"' | head -1 | sed 's/"data":"//; s/"//')
+    fi
+fi
 
         if [ -n "$result" ] && [[ "$result" =~ ^[0-9.]+$ ]]; then
             cecho "$result"

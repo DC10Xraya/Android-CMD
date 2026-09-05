@@ -261,7 +261,7 @@ fi
     # ---------- 处理 -v 模式 ----------
     if [ $verbose -eq 1 ]; then
         local old_trap=$(trap -p INT)
-        trap 'echo ""; GLOBAL_CMD_RUNNING=0; return 130' INT
+        trap 'echo ""; return 130' INT
         eval "$ping_cmd"
         local ret=$?
         if [ -n "$old_trap" ]; then
@@ -269,7 +269,6 @@ fi
         else
             trap - INT
         fi
-        GLOBAL_CMD_RUNNING=0
         return $ret
     fi
 
@@ -400,7 +399,6 @@ fi
     fi
 
     if [ $error_flag -eq 1 ]; then
-        GLOBAL_CMD_RUNNING=0
         return 1
     fi
 
@@ -445,6 +443,5 @@ fi
         err "还没有未发送任何包"
     fi
 
-    GLOBAL_CMD_RUNNING=0
     return 0
 }

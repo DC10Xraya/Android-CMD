@@ -113,16 +113,10 @@ fi
     cecho "开始扫描 $prefix$start - $prefix$end (按Ctrl+C终止扫描)"
     echo ""
 
-    # ---------- 设置运行标志 ----------
-    GLOBAL_CMD_RUNNING=1
-    GLOBAL_WORKER_PIDS=()
-    GLOBAL_PROGRESS_PID=0
-
     # ---------- 创建临时目录和文件 ----------
     local tmp_dir="${TMP_DIR:-/storage/emulated/0/tmp}/scan_$$"
     if ! mkdir -p "$tmp_dir" 2>/dev/null; then
         err "无法创建临时目录: $tmp_dir"
-        GLOBAL_CMD_RUNNING=0
         return 1
     fi
 
@@ -208,8 +202,9 @@ fi
     local ips_per_worker=$(( (total_ips + max_workers - 1) / max_workers ))
 
     # 启动进度显示
+    local progress_pid=0
     show_progress &
-    GLOBAL_PROGRESS_PID=$!
+    progress_pid=$!
 
     # 启动扫描线程
     local worker_pids=()
@@ -224,7 +219,6 @@ fi
         scan_worker $worker $worker_start $worker_end &
         local worker_pid=$!
         worker_pids+=($worker_pid)
-        GLOBAL_WORKER_PIDS+=($worker_pid)
     done
 
     # ---------- 局部信号捕获 ----------
@@ -270,10 +264,10 @@ fi
     done
 
     # 停止进度显示
-    if [ $GLOBAL_PROGRESS_PID -ne 0 ] && kill -0 "$GLOBAL_PROGRESS_PID" 2>/dev/null; then
-        kill "$GLOBAL_PROGRESS_PID" 2>/dev/null
-        wait "$GLOBAL_PROGRESS_PID" 2>/dev/null || true
-        GLOBAL_PROGRESS_PID=0
+    if [ $progress_pid -ne 0 ] && kill -0 "$progress_pid" 2>/dev/null; then
+        kill "$progress_pid" 2>/dev/null
+        wait "$progress_pid" 2>/dev/null || true
+        progress_pid=0
     fi
 
     echo ""
@@ -310,6 +304,5 @@ fi
     cecho "╚══════════════════════════════════════╝"
 
     rm -rf "$tmp_dir" 2>/dev/null || true
-    GLOBAL_CMD_RUNNING=0
-    GLOBAL_WORKER_PIDS=()
+    return 0
 }
