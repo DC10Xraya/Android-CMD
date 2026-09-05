@@ -78,11 +78,14 @@ cmd_zipdiff() {
         return 127
     fi
 
-    # ---------- 中断处理 ----------
+    # ---------- 保存原有 INT trap 并设置新 trap ----------
+    local old_int_trap=$(trap -p INT)
     local interrupted=0
-    local tmp_dir=""
     trap 'interrupted=1' INT
+    trap 'if [ -n "$old_int_trap" ]; then eval "$old_int_trap"; else trap - INT; fi' EXIT
 
+    # ---------- 临时目录 ----------
+    local tmp_dir=""
     cleanup() {
         if [ -n "$tmp_dir" ] && [ -d "$tmp_dir" ]; then
             rm -rf "$tmp_dir" 2>/dev/null
@@ -98,49 +101,47 @@ cmd_zipdiff() {
         else
             cecho -c 92 "两个ZIP文件完全相同(SHA256一致)"
         fi
-        trap - INT
-        return 0
+        return 0   # EXIT trap 自动恢复原 trap
     fi
 
     # ---------- 解压到临时目录 ----------
     if ! tmp_dir=$(mktemp -d -p "$TMP_DIR" zipdiff_XXXXXX 2>/dev/null); then
         err "无法创建临时目录"
-        trap - INT
         return 1
     fi
     local old_dir="$tmp_dir/old"
     local new_dir="$tmp_dir/new"
-    mkdir -p "$old_dir" "$new_dir" || { cleanup; err "无法创建子目录"; trap - INT; return 1; }
+    mkdir -p "$old_dir" "$new_dir" || { cleanup; err "无法创建子目录"; return 1; }
 
     if [ $interrupted -eq 0 ]; then
         if ! $UNZIP_CMD -q "$old_file" -d "$old_dir" 2>/dev/null; then
-            cleanup; err "解压源文件失败"; trap - INT; return 1
+            cleanup; err "解压源文件失败"; return 1
         fi
     else
-        cleanup; trap - INT; return 130
+        cleanup; return 130
     fi
 
     if [ $interrupted -eq 0 ]; then
         if ! $UNZIP_CMD -q "$new_file" -d "$new_dir" 2>/dev/null; then
-            cleanup; err "解压新文件失败"; trap - INT; return 1
+            cleanup; err "解压新文件失败"; return 1
         fi
     else
-        cleanup; trap - INT; return 130
+        cleanup; return 130
     fi
 
     # ---------- 生成文件列表 ----------
     if [ $interrupted -eq 0 ]; then
-        cd "$old_dir" || { cleanup; err "无法进入目录"; trap - INT; return 1; }
+        cd "$old_dir" || { cleanup; err "无法进入目录"; return 1; }
         find . -type f | sed 's/^\.\///' | sort > "$tmp_dir/old_files.txt"
-        cd "$new_dir" || { cleanup; err "无法进入目录"; trap - INT; return 1; }
+        cd "$new_dir" || { cleanup; err "无法进入目录"; return 1; }
         find . -type f | sed 's/^\.\///' | sort > "$tmp_dir/new_files.txt"
         cd - >/dev/null
     else
-        cleanup; trap - INT; return 130
+        cleanup; return 130
     fi
 
     if [ $interrupted -eq 1 ]; then
-        cleanup; trap - INT; return 130
+        cleanup; return 130
     fi
 
     # ---------- 分类 ----------
@@ -164,16 +165,15 @@ cmd_zipdiff() {
     done < "$tmp_dir/common.txt"
 
     if [ $interrupted -eq 1 ]; then
-        cleanup; trap - INT; return 130
+        cleanup; return 130
     fi
 
     # ---------- 输出 ----------
-    # 辅助函数: 输出分类标题(亮绿背景)和文件列表(普通)
     _print_category() {
         local label="$1"
         local listfile="$2"
         local show_flag="$3"
-        local file_mode="$4"   # 1: 输出到文件, 0: 终端
+        local file_mode="$4"
 
         if [ $show_flag -eq 0 ] || [ ! -s "$listfile" ]; then
             return
@@ -194,7 +194,6 @@ cmd_zipdiff() {
         fi
     }
 
-    # --- 输出两个文件路径(普通颜色, 无背景) ---
     if [ -n "$output_file" ]; then
         echo "$old_file" > "$output_file"
         echo "$new_file" >> "$output_file"
@@ -202,10 +201,9 @@ cmd_zipdiff() {
     else
         cecho "$old_file"
         cecho "$new_file"
-        echo ""   # 空行
+        echo ""
     fi
 
-    # --- 输出四个分类(标题和分隔线亮绿背景, 文件列表普通) ---
     if [ -n "$output_file" ]; then
         _print_category "新增的文件:" "$tmp_dir/only_new.txt" $show_added 1
         _print_category "删除的文件:" "$tmp_dir/only_old.txt" $show_deleted 1
@@ -220,7 +218,6 @@ cmd_zipdiff() {
 
     # ---------- 清理 ----------
     cleanup
-    trap - INT
 
     if [ -n "$output_file" ]; then
         cecho "结果已保存到: $output_file"
