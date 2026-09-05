@@ -23,7 +23,7 @@ cmd_timer() {
         fi
         target_ts=$(date +%s)
         target_ts=$((target_ts + seconds))
-        cecho "倒计时 ${seconds} 秒，按 Ctrl+C 取消"
+        cecho "倒计时 ${seconds} 秒, 按 Ctrl+C 取消"
     else
         # 闹钟模式: 尝试解析日期时间
         if ! command -v date >/dev/null 2>&1; then
@@ -40,28 +40,18 @@ cmd_timer() {
             err "闹钟时间必须在未来"
             return 1
         fi
-        cecho "闹钟设置为 $arg，按 Ctrl+C 取消"
+        cecho "闹钟设置为 $arg, 按 Ctrl+C 取消"
         mode="alarm"
     fi
 
-    # ---------- 设置运行标志 ----------
-    GLOBAL_CMD_RUNNING=1
-    GLOBAL_SIGNAL_RECEIVED=0
-
-    # ---------- 本地信号处理 (覆盖全局 INT) ----------
+    # ---------- 本地信号处理 ----------
     local cancelled=0
     local old_trap=$(trap -p INT)
-    trap 'cancelled=1' INT   # 只设置标志，循环内检查退出
+    trap 'cancelled=1' INT
 
     # ---------- 计时循环 ----------
     local last_second=""
     while [ $cancelled -eq 0 ]; do
-        # 兼容全局信号（例如 TERM 仍会触发全局退出，这里不做额外处理）
-        if [ $GLOBAL_SIGNAL_RECEIVED -eq 1 ]; then
-            cancelled=1
-            break
-        fi
-
         local now_ts=$(date +%s)
         local remaining=$((target_ts - now_ts))
 
@@ -90,7 +80,7 @@ cmd_timer() {
             last_second="$remaining"
         fi
 
-        # 精确睡眠到下一秒（避免忙等）
+        # 精确睡眠到下一秒
         if [ $remaining -gt 0 ]; then
             local now_ms
             if date +%s%N >/dev/null 2>&1; then
@@ -118,17 +108,15 @@ cmd_timer() {
 
     # ---------- 处理退出 ----------
     if [ $cancelled -eq 1 ]; then
-        GLOBAL_CMD_RUNNING=0
         cecho "计时已取消"
         return 130
     fi
 
-    # 正常结束（时间到）
+    # 正常结束
     echo ""
     for i in {1..46}; do
         err "---------------!!!时间到!!!---------------"
     done
 
-    GLOBAL_CMD_RUNNING=0
     return 0
 }
