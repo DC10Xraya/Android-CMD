@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.15.1 (dev0.249)"
+CMD_VER="0.20 (dev0.264)"
 # MIT License
 # Copyright (c) 2026 DC10Xray
 # https://github.com/DC10Xraya/Android-CMD
@@ -9,7 +9,7 @@ CMD_VER="0.15.1 (dev0.249)"
 ulimit -u 1024
 err() { printf "\033[31m%s\033[0m\n" "$*" >&2; }
 CMD_RUNNING_Err_title="----------------CMD ERROR----------------"
-CMD_Target="要求:必须由 bash 4.0+ 执行,且支持数组特性"
+CMD_Target="要求:必须由 bash 4.0+ 执行, 且支持数组特性"
 
 #bash 
 if [ -z "$BASH_VERSION" ]; then
@@ -39,7 +39,6 @@ if [ -n "$MISSING" ]; then
     exit 127
 fi
 
-
 # 至少需要 curl 或 wget 之一
 if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     err "$CMD_RUNNING_Err_title"
@@ -50,7 +49,6 @@ fi
 
 
 echo -e "\033[32m---------------CMD Running---------------\033[0m"
-
 # ------- 工具检测 -------
 init_tools() {
     if command -v busybox >/dev/null 2>&1; then
@@ -324,6 +322,8 @@ ccat() {
 }
 
 # -------- 懒惰加载 --------
+# 存储通过资源文件加载的命令函数名
+LOADED_RES_CMDS=()
 lazy_load() {
     local cmd_name="$1"
     if [[ "$cmd_name" == cmd_* ]]; then
@@ -340,6 +340,13 @@ lazy_load() {
             source "$file"
             shopt -u globstar nullglob dotglob
             if type -t "$func_name" >/dev/null 2>&1; then
+
+                LOADED_RES_CMDS+=("$func_name")
+                if [ ${#LOADED_RES_CMDS[@]} -gt 20 ]; then
+                    local oldest="${LOADED_RES_CMDS[0]}"
+                    unset -f "$oldest" 2>/dev/null
+                    LOADED_RES_CMDS=("${LOADED_RES_CMDS[@]:1}")
+                fi
                 return 0
             else
                 err "资源文件 $file 未定义函数 $func_name"
@@ -353,18 +360,20 @@ lazy_load() {
 # ---------- 配置 ----------
 CLS_TITLE=1   # 默认显示标题
 TMP_DIR=""    # 临时目录, 稍后初始化
-
 load_config() {
     if [ -f "$COLOR_CONFIG_FILE" ]; then
         while IFS='=' read -r key value; do
             [[ -z "$key" || "$key" == \#* ]] && continue
-            key="$(echo "$key" | xargs)"
-            value="$(echo "$value" | xargs)"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
             case "$key" in
                 BG)   BG="$value" ;;
                 FG)   FG="$value" ;;
                 CLS_TITLE) CLS_TITLE="${value:-1}" ;;
                 TMPDIR) TMP_DIR="$value" ;;
+                TITLE) CUSTOM_TITLE="$value" ;;
             esac
         done < "$COLOR_CONFIG_FILE"
     fi
@@ -381,33 +390,6 @@ save_config() {
 }
 
 load_config
-
-cmd_config() {
-    if [ "$1" = "-r" ] || [ "$1" = "--reset" ]; then
-        if confirm "确定重置所有配置为默认值吗?"; then
-            BG=40; FG=97; CLS_TITLE=1; CUSTOM_TITLE=""
-            if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null; then
-                TMP_DIR="$SCRIPT_DIR/tmp"
-            else
-                TMP_DIR="/storage/emulated/0/tmp"
-                mkdir -p "$TMP_DIR" 2>/dev/null
-            fi
-            save_config
-            cecho "配置已重置为默认值"
-        fi
-        return
-    fi
-
-    # 显示配置文件内容
-    if [ -f "$COLOR_CONFIG_FILE" ]; then
-        cecho -b "当前配置($COLOR_CONFIG_FILE): "
-        cat "$COLOR_CONFIG_FILE" | while IFS= read -r line; do
-            cecho "$line"
-        done
-    else
-        cecho "配置文件不存在, 使用默认配置"
-    fi
-}
 # ---------- 历史记录 ----------
 HISTFILESIZE=1000
 HISTCONTROL=ignoredups:erasedups
@@ -579,18 +561,7 @@ if [[ "$USERNAME" == "u0_a420" || "$USERNAME" == "u0_a0" ]]; then
 fi
 PRIV_LEVEL_0="$PRIV_LEVEL"
 # ---------- 标题 ----------
-CUSTOM_TITLE=""
 get_title() {
-    if [ -f "$COLOR_CONFIG_FILE" ]; then
-        local title_line=$($_GREP -E '^TITLE=' "$COLOR_CONFIG_FILE" | $_HEAD -1)
-        if [ -n "$title_line" ]; then
-            CUSTOM_TITLE="${title_line#*=}"
-            CUSTOM_TITLE="$(echo "$CUSTOM_TITLE" | xargs)"
-        else
-            CUSTOM_TITLE=""
-        fi
-    fi
-
     if [ -n "$CUSTOM_TITLE" ]; then
         cecho "$CUSTOM_TITLE"
     else
@@ -606,16 +577,16 @@ get_title() {
         cecho "Copyright (c) 2026 DC10Xray"
     fi
 
-if [ ${#SPLASHES[@]} -gt 0 ]; then
-    local random_index=$(( RANDOM % ${#SPLASHES[@]} ))
-    local splash="${SPLASHES[$random_index]}"
-    render_splash "$splash"
-fi
+    if [ ${#SPLASHES[@]} -gt 0 ]; then
+        local random_index=$(( RANDOM % ${#SPLASHES[@]} ))
+        local splash="${SPLASHES[$random_index]}"
+        render_splash "$splash"
+    fi
 
     if [ "$_IAMDC10XRAY_" != "1" ]; then
         cecho -c "#C0C0C0" "使用 HELP 或 /? 来查看命令列表(Ctrl+C退出)"
         cecho -c 36 "若参数包含空格, 用双引号或者单引号包裹即可"
-        else
+    else
         cecho -c "#C0C0C0" "我是帮助x2(you know)"
     fi
 }
@@ -727,55 +698,10 @@ file_op() {
 }
 
 # ---------- EXIT ----------
-GLOBAL_CMD_RUNNING=0
-GLOBAL_CHILD_PID=0
-GLOBAL_SIGNAL_RECEIVED=0
-GLOBAL_EXIT9_ACTIVE=0
-GLOBAL_WORKER_PIDS=()
-GLOBAL_PROGRESS_PID=0
-
-cmd_exit9() {
-    if [ $GLOBAL_EXIT9_ACTIVE -eq 1 ]; then return; fi
-    GLOBAL_EXIT9_ACTIVE=1
-    echo ""
-    err "------------CMD Stopping-----------" >&2
-    if [ -n "$GLOBAL_CHILD_PID" ] && kill -0 "$GLOBAL_CHILD_PID" 2>/dev/null; then
-        _kill_process_tree_force "$GLOBAL_CHILD_PID"
-        GLOBAL_CHILD_PID=0
-    fi
-    if [ ${#GLOBAL_WORKER_PIDS[@]} -gt 0 ]; then
-        for pid in "${GLOBAL_WORKER_PIDS[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                _kill_process_tree_force "$pid"
-            fi
-        done
-        GLOBAL_WORKER_PIDS=()
-    fi
-    if [ $GLOBAL_PROGRESS_PID -ne 0 ] && kill -0 "$GLOBAL_PROGRESS_PID" 2>/dev/null; then
-        _kill_process_tree_force "$GLOBAL_PROGRESS_PID"
-        wait "$GLOBAL_PROGRESS_PID" 2>/dev/null || true
-        GLOBAL_PROGRESS_PID=0
-    fi
-    GLOBAL_SIGNAL_RECEIVED=1
-    GLOBAL_EXIT9_ACTIVE=0
-    cleanup_temp_files
-    exit 130
-}
-
 handle_signal() {
-    if [ "$GLOBAL_CMD_RUNNING" -eq 1 ]; then
-        cmd_exit9
-    else
-        cmd_exit15
-    fi
-}
-
-trap handle_signal INT TERM QUIT HUP
-cmd_exit15_0() {
-    echo "bro 不是这个ctrl+c!!! 但是我还是会帮你"
-    sleep 0.2
     cmd_exit15
 }
+trap handle_signal INT TERM QUIT HUP
 
 cmd_exit15() {
     echo ""
@@ -783,22 +709,18 @@ cmd_exit15() {
     exit 0
 }
 
-# 物理强制退出
+cmd_exit15_0() {
+    echo "bro 不是这个ctrl+c!!! 但是我还是会帮你"
+    sleep 0.2
+    cmd_exit15
+}
+
 cmd_killself() {
     if confirm "强制终止当前脚本进程? (PID: $$)"; then
         err "------------CMD KILLED-----------"
         kill -9 $$ 2>/dev/null
     else
         echo ""
-    fi
-}
-# ---临时文件清理 ---
-cleanup_temp_files() {
-    if [ -d "$TMP_DIR" ]; then
-        rm -f "$TMP_DIR/ping_tmp_$$_"* 2>/dev/null
-        rm -rf "$TMP_DIR/scan_$$" 2>/dev/null
-        rm -rf "$TMP_DIR/portscan_$$" 2>/dev/null
-        rm -f "$TMP_DIR/tree_$$_"* 2>/dev/null
     fi
 }
 #--------------------------------------
@@ -859,84 +781,228 @@ cmd_color() {
 }
 # 临时目录
 cmd_tmpdir() {
-    if [ $# -eq 0 ] || [ "$1" != "set" ]; then
+    if [ $# -eq 0 ]; then
         cecho "当前临时目录: $TMP_DIR"
         return 0
     fi
 
-    if [ $# -lt 2 ] || [ -z "$2" ]; then
-        err "用法: TMPDIR set <目录>"
-        return 1
+    case "$1" in
+        -h|--help)
+            cecho -b "用法: TMPDIR [参数]"
+            cecho "  -h, --help     显示此帮助"
+            cecho "  -c, --clean    清除临时目录中的所有内容"
+            cecho "  -s, --set <目录> 设置临时目录"
+            cecho "  无参数          显示当前临时目录"
+            return 0
+            ;;
+        -c|--clean)
+            if [ ! -d "$TMP_DIR" ]; then
+                err "临时目录不存在: $TMP_DIR"
+                return 1
+            fi
+            if ! confirm "确定要清除临时目录 $TMP_DIR 中的所有内容吗?"; then
+                return 0
+            fi
+            # 删除目录下所有文件和子目录, 保留目录本身
+            if rm -rf "$TMP_DIR"/* 2>/dev/null; then
+                cecho "临时目录已清空"
+            else
+                err "清除临时目录失败, 请检查权限"
+                return 1
+            fi
+            return 0
+            ;;
+        -s|--set)
+            shift
+            if [ $# -eq 0 ] || [ -z "$1" ]; then
+                err "用法: TMPDIR -s <目录>"
+                return 1
+            fi
+            local newdir="$1"
+            if ! mkdir -p "$newdir" 2>/dev/null; then
+                err "无法创建目录 $newdir, 请检查路径是否合法且可写"
+                return 1
+            fi
+            local testfile="$newdir/.write_test_$$"
+            if touch "$testfile" 2>/dev/null; then
+                rm -f "$testfile"
+                TMP_DIR="$newdir"
+                save_config
+                cecho "临时目录已设置为: $TMP_DIR"
+            else
+                err "目录 $newdir 不可写, 请选择其他目录"
+                return 1
+            fi
+            ;;
+        *)
+            err "无效参数: $1, 使用 TMPDIR -h 查看帮助"
+            return 1
+            ;;
+    esac
+}
+
+cmd_config() {
+    if [ $# -eq 0 ]; then
+        if [ -f "$COLOR_CONFIG_FILE" ]; then
+            cecho -b "当前配置($COLOR_CONFIG_FILE): "
+            cat "$COLOR_CONFIG_FILE" | while IFS= read -r line; do
+                cecho "$line"
+            done
+        else
+            cecho "配置文件不存在, 使用默认配置"
+        fi
+        return 0
     fi
-    local newdir="$2"
-    if ! mkdir -p "$newdir" 2>/dev/null; then
-        err "无法创建目录 $newdir, 请检查路径是否合法且可写"
-        return 1
-    fi
-    local testfile="$newdir/.write_test_$$"
-    if touch "$testfile" 2>/dev/null; then
-        rm -f "$testfile"
-        TMP_DIR="$newdir"
-        save_config
-        cecho "临时目录已设置为: $TMP_DIR"
-    else
-        err "目录 $newdir 不可写, 请选择其他目录"
-        return 1
-    fi
+
+    case "$1" in
+        -h|--help)
+            cecho -b "用法: CONFIG [选项]"
+            cecho "  -h, --help     显示此帮助"
+            cecho "  -c, --clean    清除配置文件并重置为默认值(文件将被删除)"
+            cecho "  -r, --reset    重置所有配置为默认值(覆盖配置文件)"
+            cecho "  无参数          显示当前配置内容"
+            return 0
+            ;;
+        -c|--clean)
+            if confirm "确定要清除配置文件 ($COLOR_CONFIG_FILE) 并重置配置为默认值吗?"; then
+                rm -f "$COLOR_CONFIG_FILE" 2>/dev/null
+                BG=40; FG=97; CLS_TITLE=1; CUSTOM_TITLE=""
+                if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null; then
+                    TMP_DIR="$SCRIPT_DIR/tmp"
+                else
+                    TMP_DIR="/storage/emulated/0/tmp"
+                    mkdir -p "$TMP_DIR" 2>/dev/null
+                fi
+                # 文件已删除, 内存中已重置, 但不保存(因为文件已删, 下次修改时会重新创建)
+                cecho "配置文件已清除, 配置已重置为默认值"
+            else
+            echo ""
+            fi
+            return 0
+            ;;
+        -r|--reset)
+            if confirm "确定重置所有配置为默认值吗?"; then
+                BG=40; FG=97; CLS_TITLE=1; CUSTOM_TITLE=""
+                if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null; then
+                    TMP_DIR="$SCRIPT_DIR/tmp"
+                else
+                    TMP_DIR="/storage/emulated/0/tmp"
+                    mkdir -p "$TMP_DIR" 2>/dev/null
+                fi
+                save_config
+                cecho "配置已重置为默认值"
+            fi
+            return 0
+            ;;
+        *)
+            err "无效选项: $1, 使用 CONFIG -h 查看帮助"
+            return 1
+            ;;
+    esac
 }
 
 # 资源加载
 cmd_resource() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: RESOURCE [子命令]"
-        cecho "  RESOURCE           显示本帮助"
-        cecho "  RESOURCE load      列出可用的外部资源文件"
-        cecho "  RESOURCE reload    重载资源列表(重新扫描)"
-        echo ""
-        cecho "资源文件位于 resource/ 目录及其子目录下, "
-        cecho "以 cmd_*.bash 命名, 主程序启动时自动扫描"
-        cecho "如果某个命令的资源文件缺失, 则该命令将不可用"
+        if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]] || [ "$#" -eq 0 ]; then
+        cecho -b "用法: RESOURCE <子命令> [参数]"
+        cecho "  ls                    列出所有可用的资源文件"
+        cecho "  laod                  列出当前已加载的资源函数"
+        cecho "  del                   卸载全部已加载资源"
+        cecho "  del <N>/<函数名>      卸载最旧的 N 个(正整数)/卸载指定函数"
+        cecho "  -h, --help, help      显示此帮助"
         return 0
     fi
-    case "$1" in
+
+    local sub="$1"; shift
+
+    case "$sub" in
+        ls)
+    shopt -s globstar nullglob dotglob
+    local files=()
+    for f in "$RESOURCE_DIR"/**/cmd_*.bash; do
+        [ -f "$f" ] && files+=("${f#$SCRIPT_DIR/}")
+    done
+    shopt -u globstar nullglob dotglob
+    if [ ${#files[@]} -eq 0 ]; then
+        cecho "无任何资源文件"
+        return
+    fi
+    IFS=$'\n' sorted=($(sort <<<"${files[*]}")); unset IFS
+    cecho -b "可用的资源文件:"
+    local i=1
+    for f in "${sorted[@]}"; do
+        cecho "  $i. $f"
+        ((i++))
+    done
+    ;;
         load)
-            local show_all=0
-            [ "$2" = "-debug" ] && show_all=1
-            shopt -s globstar nullglob dotglob
-            local files=()
-            for f in "$RESOURCE_DIR"/**/cmd_*.bash; do
-                [ -f "$f" ] && files+=("$f")
-            done
-            shopt -u globstar nullglob dotglob
-            if [ ${#files[@]} -eq 0 ]; then
-                cecho "没有找到任何资源文件"
+            if [ ${#LOADED_RES_CMDS[@]} -eq 0 ]; then
+                cecho "当前未加载任何资源"
                 return
             fi
-            local sorted
-            sorted=$(printf '%s\n' "${files[@]}" | sort)
-            local filtered=()
-            while IFS= read -r file; do
-                local rel="${file#$SCRIPT_DIR/}"
-                if [ $show_all -eq 1 ] || [[ ! "${rel,,}" =~ laugh|debug ]]; then
-                    filtered+=("$rel")
-                fi
-            done <<< "$sorted"
-            if [ ${#filtered[@]} -eq 0 ]; then
-                cecho "没有可显示的资源文件(可能被过滤, 使用 debug 参数查看全部)"
-                return
-            fi
-            cecho -b "可用的外部资源文件:"
-            local idx=1
-            for rel_path in "${filtered[@]}"; do
-                cecho "  $idx. $rel_path"
-                ((idx++))
+            cecho -b "已加载的资源函数:"
+            local i=1
+            for f in "${LOADED_RES_CMDS[@]}"; do
+                cecho "  $i. ${f#cmd_}"
+                ((i++))
             done
             ;;
-        reload)
-            cmd_resource load "$2"
+        del)
+            # 无参数：全部卸载
+            if [ $# -eq 0 ]; then
+                if [ ${#LOADED_RES_CMDS[@]} -eq 0 ]; then
+                    cecho "无已加载资源"
+                    return
+                fi
+                confirm "确定卸载全部已加载资源?" || return
+                for f in "${LOADED_RES_CMDS[@]}"; do unset -f "$f"; done
+                LOADED_RES_CMDS=()
+                cecho "已全部卸载"
+                return
+            fi
+
+            local arg="$1"
+            # 数字：卸载最旧 N 个
+            if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                local n=$arg
+                local total=${#LOADED_RES_CMDS[@]}
+                if [ $total -eq 0 ]; then
+                    cecho "无已加载资源"
+                    return
+                fi
+                [ $n -gt $total ] && n=$total
+                [ $n -eq 0 ] && cecho "数量为0, 跳过" && return
+                confirm "确定卸载最旧的 $n 个资源?" || return
+                for ((i=0; i<n; i++)); do
+                    unset -f "${LOADED_RES_CMDS[0]}"
+                    LOADED_RES_CMDS=("${LOADED_RES_CMDS[@]:1}")
+                done
+                cecho "已卸载 $n 个资源"
+                return
+            fi
+
+            # 函数名(可不带 cmd_ 前缀）
+            local name="$arg"
+            [[ "$name" != cmd_* ]] && name="cmd_$name"
+            local found=0 new=()
+            for f in "${LOADED_RES_CMDS[@]}"; do
+                if [ "$f" = "$name" ]; then
+                    found=1
+                else
+                    new+=("$f")
+                fi
+            done
+            if [ $found -eq 0 ]; then
+                err "未找到已加载的资源: $arg"
+                return 1
+            fi
+            confirm "确定卸载 $name?" || return
+            unset -f "$name"
+            LOADED_RES_CMDS=("${new[@]}")
+            cecho "已卸载 $name"
             ;;
         *)
-            err "未知子命令, 使用 RESOURCE -h 查看帮助"
+            err "未知子命令: $sub, 使用 RESOURCE -h 查看帮助"
             return 1
             ;;
     esac
@@ -1079,6 +1145,7 @@ $CMD_delimiter
   -在指定文件中搜索字符串/正则表达式
   HEAD [-n N] [参数] <文件>  显示文件开头N行(系统)
   TAIL [-n N] [参数] <文件>  显示文件结尾N行(系统)
+  CUT [选项] [文件...]       按列/字段截取文本(系统)
   MD/MKDIR [目录]           创建目录
   NEW/TOUCH <文件>          创建新文件或者更新文件时间
   MOVE [源...] [目标]       移动文件/目录,或重命名(同目录下)
@@ -1089,6 +1156,9 @@ $CMD_delimiter
   STAT <文件>               显示文件的详细信息
   WC [参数] [文件...]       统计行数、单词数、字符数
   CODEWC [参数] [文件...]   统计代码的行数、单词数、字符数(BETA)
+  AWK [选项] '程序' [文件...]    执行 awk 程序(系统)
+  GREP [选项] 模式 [文件...]     在文件中搜索模式(系统)
+  SED [选项] '脚本' [文件...]    流编辑器(系统)
   LN -s <源> <目标>         创建软链接(符号链接)
   TREE [参数] [路径]        显示目录树
   TYPE [文件]               查看文本文件
@@ -1140,8 +1210,7 @@ $CMD_delimiter
   PORTSCAN [参数]   扫描指定地址的存活端口
   DOWNLOAD <URL> <本地路径> 下载网络文件到本地
   ST/SPEEDTEST [-u URL] [-t 超时] ⤸
-  -网络测速(默认 Cloudflare 10MB,注意流量消耗)
-  MCMODDOWNLOAD     从Modrinth下载MC JAVA模组
+  -网络测速(默认 Cloudflare 10MB)
 
 //cecho -b "编解码与校验"
   BASE64/B64 -d <字符串>/[-d] -f <文件>  Base64编码/解码
@@ -1172,21 +1241,19 @@ $CMD_delimiter
   WATCH <秒数> <命令> [参数]    每隔指定时间清除屏幕并运行命令
   REPEAT <次数> <命令> [参数]   重复执行指定次数命令
   CMDTIME <命令> [参数]         测量命令执行耗时
-  MCSERVER                      模拟运行MC服务器
 //cecho -b "控制台"
-  CLS/CLEAR              清除屏幕(-n无标题/-r/-y有)
-  CLSD/CLEARD            设置清除屏幕默认行为
-  COLOR [-def]/[BF]      设置控制台颜色
-  TITLE [-def]/[文本]    设置控制台标题
-  TMPDIR set [目录]/~           设置/查看临时目录
-  RESOURCE load/reload          查看加载资源/重载资源
+  CLS/CLEAR                     清除屏幕(-n无标题/-r/-y有)
+  CLSD/CLEARD                   设置清除屏幕默认行为
+  COLOR [-def]/[BF]             设置控制台颜色
+  TITLE [-def]/[文本]           设置控制台标题
+  TMPDIR [参数]                 临时目录
+  RESOURCE [参数]               资源目录
   HISTORY [参数]                历史命令
-  CONFIG <-r 默认/无参数显示>   显示配置或恢复默认配置
+  ETC/CONFIG [参数]             配置
   UPDATE                        检查更新
   INFO                          显示脚本自身信息
   HELP <OR> /?                  此命令列表
   EXIT/EXIT15                   正常退出
-  EXIT9                         强制退出
   EXITK/KILLSELF                杀掉自己以退出
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
   ULIMIT [参数] [限制值]        限制SHELL
@@ -1549,7 +1616,7 @@ cmd_del() {
     [ $# -eq 0 ] && { err "命令语法不正确"; return; }
     for f in "$@"; do
         if [ -e "$f" ]; then
-            confirm "删除 $f 吗?" || { cecho "已取消"; continue; }
+            confirm "删除 $f 吗?" || { echo ""; continue; }
             if [ -d "$f" ]; then
                 $_RM -r "$f" 2>/dev/null && cecho "已删除目录: $f" || err "删除目录 $f 失败"
             else
@@ -1593,7 +1660,7 @@ cmd_rd() {
     [ $# -eq 0 ] && { err "命令语法不正确"; return; }
     for dir in "$@"; do
         if [ -d "$dir" ]; then
-            confirm "删除目录 $dir 吗?" || { cecho "已取消"; continue; }
+            confirm "删除目录 $dir 吗?" || { echo ""; continue; }
             $_RMDIR "$dir" 2>/dev/null || err "目录删除失败(可能非空): $dir"
         else
             err "系统找不到指定的路径: $dir"
@@ -1846,7 +1913,6 @@ cmd_mount() {
     # 检查挂载点是否存在
     if [ ! -d "$mountpoint" ]; then
         if ! confirm "挂载点 $mountpoint 不存在, 是否创建"; then
-            cecho "已取消"
             return 0
         fi
         mkdir -p "$mountpoint" || { err "无法创建挂载点"; return 1; }
@@ -1859,7 +1925,6 @@ cmd_mount() {
     fi
 
     if ! confirm "确定要挂载 $device 到 $mountpoint 吗"; then
-        cecho "已取消"
         return 0
     fi
 
@@ -1896,7 +1961,6 @@ cmd_umount() {
     fi
 
     if ! confirm "确定要卸载 $target 吗?"; then
-        cecho "已取消"
         return 0
     fi
 
@@ -2041,6 +2105,103 @@ cmd_format() {
     fi
 }
 # 0.15NEW Finish
+# 0.20NEW start
+# ---------- awk包装 ----------
+cmd_awk() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: AWK [选项] '程序' [文件...]"
+        cecho "执行 awk 程序, 输出结果逐行着色"
+        return 0
+    fi
+    local output
+    output=$($_AWK "$@" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        err "awk 执行失败 (错误码 $ret):"
+        err "$output"
+        return $ret
+    else
+        echo "$output" | while IFS= read -r line; do
+            cecho "$line"
+        done
+        return 0
+    fi
+}
+
+# ---------- grep包装 ----------
+cmd_grep() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: GREP [选项] 模式 [文件...]"
+        cecho "在文件或标准输入中搜索模式(保留颜色输出)"
+        return 0
+    fi
+    local output
+    output=$($_GREP "$@" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        # grep 返回 1 表示未找到, 不算错误
+        if [ $ret -eq 1 ]; then
+            echo "$output" | while IFS= read -r line; do
+                cecho "$line"
+            done
+            return 1
+        else
+            err "grep 执行失败 (错误码 $ret):"
+            err "$output"
+            return $ret
+        fi
+    else
+        echo "$output" | while IFS= read -r line; do
+            cecho "$line"
+        done
+        return 0
+    fi
+}
+
+# ---------- sed包装 ----------
+cmd_sed() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: SED [选项] '脚本' [文件...]"
+        cecho "执行 sed 流编辑器, 输出逐行着色"
+        return 0
+    fi
+    local output
+    output=$($_SED "$@" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        err "sed 执行失败 (错误码 $ret):"
+        err "$output"
+        return $ret
+    else
+        echo "$output" | while IFS= read -r line; do
+            cecho "$line"
+        done
+        return 0
+    fi
+}
+
+# ---------- cut包装 ----------
+cmd_cut() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: CUT [选项] [文件...]"
+        cecho "按列或字段截取文本, 输出逐行着色"
+        return 0
+    fi
+    local output
+    output=$($_CUT "$@" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        err "cut 执行失败 (错误码 $ret):"
+        err "$output"
+        return $ret
+    else
+        echo "$output" | while IFS= read -r line; do
+            cecho "$line"
+        done
+        return 0
+    fi
+}
+# 0.20NEW Finish
 
 cmd_cpumonitor() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -2491,7 +2652,6 @@ cmd_watch() {
     fi
 
     if ! confirm "每 ${interval} 秒清屏并执行: \"$cmd_line\"?(按Ctrl+C随时退出)"; then
-        cecho "已取消"
         return 0
     fi
 
@@ -2546,7 +2706,6 @@ cmd_repeat() {
     fi
 
     if ! confirm "执行 \"$cmd_line\" *$count?(按Ctrl+C随时退出)"; then
-        cecho "已取消"
         return 0
     fi
 
@@ -3100,7 +3259,6 @@ cmd_adb() {
         return 0
     fi
     if ! confirm "确认要执行此ADB命令吗?(请确认命令是否安全!)"; then
-        cecho "已取消"
         return 0
     fi
     if command -v adb >/dev/null 2>&1; then
@@ -3209,7 +3367,6 @@ cmd_sh() {
         return 1
     fi
     if ! confirm "确认要执行此脚本吗?(请确认脚本内不含危险代码!)"; then
-        cecho "已取消"
         return 0
     fi
     cecho "执行脚本: $script"
@@ -3276,7 +3433,6 @@ cmd_kill() {
         cecho "进程信息: $proc_info"
         echo ""
         if ! confirm "强制终止此进程吗?"; then
-            cecho "已取消"
             return 0
         fi
     else
@@ -3284,7 +3440,6 @@ cmd_kill() {
         cecho "进程信息: $proc_info"
         echo ""
         if ! confirm "终止此进程吗?"; then
-            cecho "已取消"
             return 0
         fi
     fi
@@ -3322,26 +3477,6 @@ cmd_kill() {
 }
 
 # ---------- debug ----------
-debug_help() {
-cecho "$CMD_delimiter"
-err "#以下显示的是debug命令:"
-cecho "debug/debug_/debug__/debug_help/help_debug/debughelp/helpdebug -假的我"
-cecho "debug___/debug_help_/help_debug_ -ME"
-cecho "debug_0 <root/adb/normal/[空]> -更改我认为的你的权限"
-cecho "debug_1/resource load -debug -查看隐藏资源(默认屏蔽调试和laugh命令)"
-cecho "debug_2/debug_line -统计行数"
-cecho "$CMD_delimiter"
-err "#以下显示的是\$iamvar命令"
-cecho "114514/1145141919810 -error stink"
-cecho "100/dev100/dev_build_0.100 -正如名字所说"
-cecho "yesyesyes/yyy/yy/yesyes -YES YES YES!!!"
-cecho "command not found/commandnotfound -command not found!!!"
-err "cmd_bomb_fork -炸弹,将会导致设备死机!!!"
-cecho "$CMD_delimiter/CMD_delimiter -无意义"
-cecho "wtf -wtffffffff"
-cecho "wtf2 -wtffffffff"
-cecho "$CMD_delimiter"
-}
 debug_0() {
     if [ $# -eq 0 ]; then
         PRIV_LEVEL="$PRIV_LEVEL_0"
@@ -3359,6 +3494,7 @@ debug_0() {
         *)    PROMPT_SYMBOL="->" ;;
     esac
 }
+# debug_1已死
 debug_2() {
     # 加载 codewc
     lazy_load "codewc" || {
@@ -3450,7 +3586,7 @@ _extract_ver() {
 }
 # 比较两个版本号, 如果 v1 >= v2 返回 0(真), 否则返回 1
 _ver_ge() {
-    # 比较两个版本号（如 0.15.1 和 0.15），返回 0 表示 v1 >= v2
+    # 比较两个版本号(如 0.15.1 和 0.15), 返回 0 表示 v1 >= v2
     local v1=($(echo "$1" | tr '.' ' '))
     local v2=($(echo "$2" | tr '.' ' '))
     local len1=${#v1[@]} len2=${#v2[@]}
@@ -3548,6 +3684,18 @@ cmd_update() {
     # 执行完后立即删除缓存
     rm -f "$_update_cache"
 }
+
+# 检查临时目录大小
+check_tmpdir_size() {
+    if [ -d "$TMP_DIR" ]; then
+        local size_mb=$(du -sm "$TMP_DIR" 2>/dev/null | cut -f1)
+        [ -z "$size_mb" ] && return 0
+        if [ "$size_mb" -gt 1 ]; then
+            _cprint -b -c 33 "[TMPDIR]临时目录 ($TMP_DIR) 大小达 ${size_mb}MB, 建议使用 TMPDIR -c 清理"
+        fi
+    fi
+}
+check_tmpdir_size
 # ---------- 主循环 ----------
 while true; do
     # 判断是否使用默认颜色(黑底亮白)
@@ -3616,6 +3764,7 @@ while true; do
     args_array=("${PARSED_ARGS[@]:1}")
 
     # 命令分发(按照命令列表顺序)
+    # 大部分命令直接通过lazy load加载
     case "$cmd" in
     # ---------- 内部别名 ----------
     copy|cp)           cmd_copy "${args_array[@]}" ;;
@@ -3639,6 +3788,7 @@ while true; do
     exit|exit15)       cmd_exit15 ;;
     exitk|killself)    cmd_killself ;;
     cmdinfo|info)      cmd_cmdinfo ;;
+    etc|config)        cmd_config "${args_array[@]}" ;;
     ctrl+c)            cmd_exit15_0 ;;
     c|cmd)             cmd_cmd "${args_array[@]}" ;;
     fun|function)      cmd_fun "${args_array[@]}" ;;
@@ -3655,11 +3805,11 @@ while true; do
     err)               err "${args_array[*]}" ;;
     cd)                cd "${args_array[*]}" ;;
     # ---------- debug ------------
-    debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug)
+    debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug|debug___|debug_help_|help_debug_)
         err "调试模式还在设计中(真的吗?)" ;;
-    debug___|debug_help_|help_debug_)  debug_help ;;
-    debug_1)  cmd_resource load -debug "${args_array[@]}" ;;
-    debug_2|debug_line)  debug_2 ;;
+    debug_1)                    err "No Way" ;;
+    debug_2|debug_wc|codewcme)  debug_2 ;;
+    debug_0|debug_lev)          debug_0 ;;
     $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
     # ---------- SP ----------
     114514)     lazy_load "laugh_114514" && cmd_laugh_114514 ;;
@@ -3669,6 +3819,7 @@ while true; do
     command|commandnotfound) lazy_load "laugh_command_not_found" && cmd_laugh_command_not_found "${args_array[@]}" ;;
     permission|permissiondenied) lazy_load "laugh_permission_denied" && cmd_laugh_permission_denied "${args_array[@]}" ;;
     mcserver)     lazy_load "laugh_mcserver" && cmd_laugh_mcserver ;;
+    walmart)      lazy_load "laugh_walmart" && cmd_laugh_walmart ;;
     wtf)
         lazy_load "hack"  # 预加载依赖
         lazy_load "laugh_wtf" && cmd_laugh_wtf ;;
@@ -3686,7 +3837,7 @@ while true; do
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
-    # ----------自定义函数 / 懒惰加载 / 未知命令 ----------
+    # ---------- 自定义函数 / 懒惰加载 / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
     if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
