@@ -1,17 +1,59 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.20 (dev0.264)"
-# MIT License
-# Copyright (c) 2026 DC10Xray
+CMD_VER="0.21 (dev0.279)"
 # https://github.com/DC10Xraya/Android-CMD
+# tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
+# ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
+cmd_cmdinfo() {
+cecho -b "--- 关于 Android CMD ---"
+    ccat << EOF
+版本: $CMD_VER
+作者: DC10Xray
+许可证: MIT   Copyright (c) 2026 DC10Xray
+//cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
+EOF
+    cecho -b "--- MIT ---"
+    ccat << "EOF"
+//cecho -b "MIT License"
 
-# ---------运行前---------
+Copyright (c) 2026 DC10Xray
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+EOF
+}
+# 说虽然现在ccat没定义, 但是等到用户输入这个命令的时候就已经定义完了
+
+# 进程数限制
+_ORIG_ULIMIT_U="$(ulimit -u 2>/dev/null)"
+_restore_ulimit() {
+    [ -n "$_ORIG_ULIMIT_U" ] || return 0
+    ulimit -u "$_ORIG_ULIMIT_U" 2>/dev/null
+}
+trap '_restore_ulimit' EXIT
 ulimit -u 1024
+
 err() { printf "\033[31m%s\033[0m\n" "$*" >&2; }
 CMD_RUNNING_Err_title="----------------CMD ERROR----------------"
 CMD_Target="要求:必须由 bash 4.0+ 执行, 且支持数组特性"
 
-#bash 
+# bash 
 if [ -z "$BASH_VERSION" ]; then
     err "$CMD_RUNNING_Err_title"
     err "请使用 bash 执行!"
@@ -25,7 +67,7 @@ if ! (arr=(1 2); (( ${#arr[@]} == 2 ))) 2>/dev/null; then
     exit 70
 fi
 
-#必须工具
+# 必须工具
 MISSING=""
 for cmd in awk grep sed cat cut head tail bc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -79,8 +121,29 @@ init_tools
 #------------------------------------------
 # ------------------初始化------------------
 CMD_delimiter="----------------------------------------------------"
-# ---------- 主逻辑part:自定义命令行解析器 BETA ----------
+# ---------- 主逻辑part:自定义命令行解析器 BETA 3 ----------
 PARSED_ARGS=()   # 全局数组, 存储解析后的参数
+# 尝试展开自定义变量: $pwd / $sdir / $self / $0
+_match_custom_var() {
+    local rest="$1"
+    local after
+    if [[ "$rest" == '$pwd'* ]]; then
+        after="${rest:4:1}"
+        [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$pwd'; return; }
+    fi
+    if [[ "$rest" == '$sdir'* ]]; then
+        after="${rest:5:1}"
+        [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$sdir'; return; }
+    fi
+    if [[ "$rest" == '$self'* ]]; then
+        after="${rest:5:1}"
+        [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$self'; return; }
+    fi
+    if [[ "$rest" == '$0'* ]]; then
+        printf '%s' '$0'; return
+    fi
+}
+
 # 解析一行输入, 结果存入 PARSED_ARGS
 parse_line() {
     local input="$1"
@@ -99,21 +162,28 @@ parse_line() {
         fi
         if [ $in_single -eq 0 ] && [ $in_double -eq 0 ]; then
             case "$char" in
-                "'")
-                    in_single=1
-                    continue
-                    ;;
-                '"')
-                    in_double=1
-                    continue
-                    ;;
-                "\\")
-                    escape=1
-                    continue
-                    ;;
+                "'")      in_single=1; continue ;;
+                '"')      in_double=1; continue ;;
+                "\\")     escape=1;    continue ;;
                 "#")
-                    # 注释开始, 截断剩余内容
-                    break
+                if [ -z "$current" ]; then
+                break
+                fi
+                current="$current$char"
+                ;;
+                '$')
+                    local _lit
+                    _lit=$(_match_custom_var "${input:i}")
+                    if [ -n "$_lit" ]; then
+                        case "$_lit" in
+                            '$pwd')        current="$current$PWD" ;;
+                            '$sdir')       current="$current$SCRIPT_DIR" ;;
+                            '$self'|'$0')  current="$current$0" ;;
+                        esac
+                        (( i += ${#_lit} - 1 ))
+                        continue
+                    fi
+                    current="$current$char"
                     ;;
                 [[:space:]])
                     if [ -n "$current" ]; then
@@ -122,19 +192,39 @@ parse_line() {
                     fi
                     continue
                     ;;
-                *)
-                    current="$current$char"
-                    ;;
+                *) current="$current$char" ;;
             esac
         elif [ $in_single -eq 1 ]; then
-            if [ "$char" = "'" ] && [ $escape -eq 0 ]; then
+            if [ "$char" = "'" ]; then
                 in_single=0
             else
                 current="$current$char"
             fi
         elif [ $in_double -eq 1 ]; then
-            if [ "$char" = '"' ] && [ $escape -eq 0 ]; then
+            if [ "$char" = '"' ]; then
                 in_double=0
+            elif [ "$char" = '\' ]; then
+                next="${input:i+1:1}"
+                case "$next" in
+                    '$'|'`'|'"'|'\\')
+                        current="$current$next"
+                        (( i++ ))
+                        ;;
+                    *) current="$current$char" ;;
+                esac
+            elif [ "$char" = '$' ]; then
+                local _lit
+                _lit=$(_match_custom_var "${input:i}")
+                if [ -n "$_lit" ]; then
+                    case "$_lit" in
+                        '$pwd')        current="$current$PWD" ;;
+                        '$sdir')       current="$current$SCRIPT_DIR" ;;
+                        '$self'|'$0')  current="$current$0" ;;
+                    esac
+                    (( i += ${#_lit} - 1 ))
+                else
+                    current="$current$char"
+                fi
             else
                 current="$current$char"
             fi
@@ -165,12 +255,14 @@ FG=97   # 默认前景
 
 # 文字输出说明:cecho(无参数,参数见下)为控制台颜色,err为红色,echo、printf保留原有功能
 # -n不换行,-c指定前景色,-cb指定背景色,-b粗,-I斜,-u下划线,-s删除线,-r类似默认echo
-# c或者cb支持两位数字颜色码和16进制颜色码
+# c或者cb支持两位数字颜色码和16进制颜色码, c256/cb256支持256色颜色, c或者cb不能和c256或者cb256同时使用
 # 当 BG 为 40 或 100(背景为0)时,不输出背景(所以请强制使用黑色背景控制台,命令提示符无论何时都有背景)
 _cprint() {
     local opt_n=false
-    local custom_fg=""   # 可以是 "31" 或 "#FF0000"
-    local custom_bg=""   # 可以是 "41" 或 "#00FF00"
+    local custom_fg=""
+    local custom_bg=""
+    local custom_fg256=""
+    local custom_bg256=""
     local bold=0 italic=0 underline=0 strikethrough=0
     local plain=0
     while [[ $# -gt 0 ]]; do
@@ -178,6 +270,8 @@ _cprint() {
             -n) opt_n=true; shift ;;
             -c) custom_fg="$2"; shift 2 ;;
             -cb) custom_bg="$2"; shift 2 ;;
+            -c256) custom_fg256="$2"; shift 2 ;;
+            -cb256) custom_bg256="$2"; shift 2 ;;
             -b) bold=1; shift ;;
             -i) italic=1; shift ;;
             -u) underline=1; shift ;;
@@ -200,6 +294,30 @@ _cprint() {
         return
     fi
 
+    # ---- 冲突检测: 256 色 vs 2位/16进制 ----
+    if [ -n "$custom_fg" ] && [ -n "$custom_fg256" ]; then
+        err "cecho: 不能同时使用256色颜色和2位数字颜色或16进制颜色"
+        return 1
+    fi
+    if [ -n "$custom_bg" ] && [ -n "$custom_bg256" ]; then
+        err "cecho: 不能同时使用256色颜色和2位数字颜色或16进制颜色"
+        return 1
+    fi
+
+    # ---- 256 色数值合法性校验 ----
+    if [ -n "$custom_fg256" ]; then
+        if ! [[ "$custom_fg256" =~ ^[0-9]+$ ]] || [ "$custom_fg256" -lt 0 ] || [ "$custom_fg256" -gt 255 ]; then
+            err "cecho: -c256 需要 0-255 之间的整数"
+            return 1
+        fi
+    fi
+    if [ -n "$custom_bg256" ]; then
+        if ! [[ "$custom_bg256" =~ ^[0-9]+$ ]] || [ "$custom_bg256" -lt 0 ] || [ "$custom_bg256" -gt 255 ]; then
+            err "cecho: -cb256 需要 0-255 之间的整数"
+            return 1
+        fi
+    fi
+
     # 构建属性列表(样式 + 背景 + 前景)
     local attrs=()
     [ $bold -eq 1 ] && attrs+=("1")
@@ -207,26 +325,28 @@ _cprint() {
     [ $underline -eq 1 ] && attrs+=("4")
     [ $strikethrough -eq 1 ] && attrs+=("9")
 
-    # ---背景色处理---
+    # --- 背景色处理 ---
     local bg_code=""
-    if [ -n "$custom_bg" ]; then
+    if [ -n "$custom_bg256" ]; then
+        bg_code="48;5;$custom_bg256"
+    elif [ -n "$custom_bg" ]; then
         if [[ "$custom_bg" =~ ^#([0-9A-Fa-f]{6})$ ]]; then
-            # 十六进制颜色,转换为 48;2;R;G;B
             local r=$((16#${BASH_REMATCH[1]:0:2}))
             local g=$((16#${BASH_REMATCH[1]:2:2}))
             local b=$((16#${BASH_REMATCH[1]:4:2}))
             bg_code="48;2;$r;$g;$b"
         else
-            # 纯数字颜色码
             bg_code="$custom_bg"
         fi
     elif [ "$BG" != "40" ] && [ "$BG" != "100" ]; then
         bg_code="$BG"
     fi
 
-    # ---前景色处理---
+    # --- 前景色处理 ---
     local fg_code=""
-    if [ -n "$custom_fg" ]; then
+    if [ -n "$custom_fg256" ]; then
+        fg_code="38;5;$custom_fg256"
+    elif [ -n "$custom_fg" ]; then
         if [[ "$custom_fg" =~ ^#([0-9A-Fa-f]{6})$ ]]; then
             local r=$((16#${BASH_REMATCH[1]:0:2}))
             local g=$((16#${BASH_REMATCH[1]:2:2}))
@@ -239,11 +359,9 @@ _cprint() {
         fg_code="$FG"
     fi
 
-    # 将背景码和前景码加入属性列表
     [ -n "$bg_code" ] && attrs+=("$bg_code")
     attrs+=("$fg_code")
 
-    # 生成转义序列
     local attr_str=$(IFS=';'; echo "${attrs[*]}")
     local esc_seq="\033[${attr_str}m"
 
@@ -560,6 +678,15 @@ if [[ "$USERNAME" == "u0_a420" || "$USERNAME" == "u0_a0" ]]; then
     fi
 fi
 PRIV_LEVEL_0="$PRIV_LEVEL"
+
+cmd_username() {
+    if [ "$_IAMDC10XRAY_" = "1" ]; then
+        cecho -b -c256 201 "!?兄弟确实很帅?!"
+    else
+        err "!?兄弟以为自己很帅?!"
+    fi
+}
+
 # ---------- 标题 ----------
 get_title() {
     if [ -n "$CUSTOM_TITLE" ]; then
@@ -574,7 +701,7 @@ get_title() {
     if [ "$_IAMDC10XRAY_" = "1" ]; then
         cecho -c 36 "◇Welcome DC10Xray(~v~)◇"
     else
-        cecho "Copyright (c) 2026 DC10Xray"
+        cecho -b "Copyright (c) 2026 DC10Xray"
     fi
 
     if [ ${#SPLASHES[@]} -gt 0 ]; then
@@ -585,9 +712,8 @@ get_title() {
 
     if [ "$_IAMDC10XRAY_" != "1" ]; then
         cecho -c "#C0C0C0" "使用 HELP 或 /? 来查看命令列表(Ctrl+C退出)"
-        cecho -c 36 "若参数包含空格, 用双引号或者单引号包裹即可"
     else
-        cecho -c "#C0C0C0" "我是帮助x2(you know)"
+        cecho -c "#C0C0C0" "我是帮助(you know)"
     fi
 }
 #------------------------------
@@ -717,6 +843,7 @@ cmd_exit15_0() {
 
 cmd_killself() {
     if confirm "强制终止当前脚本进程? (PID: $$)"; then
+        _restore_ulimit
         err "------------CMD KILLED-----------"
         kill -9 $$ 2>/dev/null
     else
@@ -856,7 +983,7 @@ cmd_config() {
 
     case "$1" in
         -h|--help)
-            cecho -b "用法: CONFIG [选项]"
+            cecho -b "用法: CONFIG [参数]"
             cecho "  -h, --help     显示此帮助"
             cecho "  -c, --clean    清除配置文件并重置为默认值(文件将被删除)"
             cecho "  -r, --reset    重置所有配置为默认值(覆盖配置文件)"
@@ -895,7 +1022,7 @@ cmd_config() {
             return 0
             ;;
         *)
-            err "无效选项: $1, 使用 CONFIG -h 查看帮助"
+            err "无效参数: $1, 使用 CONFIG -h 查看帮助"
             return 1
             ;;
     esac
@@ -1145,7 +1272,7 @@ $CMD_delimiter
   -在指定文件中搜索字符串/正则表达式
   HEAD [-n N] [参数] <文件>  显示文件开头N行(系统)
   TAIL [-n N] [参数] <文件>  显示文件结尾N行(系统)
-  CUT [选项] [文件...]       按列/字段截取文本(系统)
+  CUT [参数] [文件...]       按列/字段截取文本(系统)
   MD/MKDIR [目录]           创建目录
   NEW/TOUCH <文件>          创建新文件或者更新文件时间
   MOVE [源...] [目标]       移动文件/目录,或重命名(同目录下)
@@ -1156,9 +1283,9 @@ $CMD_delimiter
   STAT <文件>               显示文件的详细信息
   WC [参数] [文件...]       统计行数、单词数、字符数
   CODEWC [参数] [文件...]   统计代码的行数、单词数、字符数(BETA)
-  AWK [选项] '程序' [文件...]    执行 awk 程序(系统)
-  GREP [选项] 模式 [文件...]     在文件中搜索模式(系统)
-  SED [选项] '脚本' [文件...]    流编辑器(系统)
+  AWK [参数] '程序' [文件...]    执行 awk 程序(系统)
+  GREP [参数] 模式 [文件...]     在文件中搜索模式(系统)
+  SED [参数] '脚本' [文件...]    流编辑器(系统)
   LN -s <源> <目标>         创建软链接(符号链接)
   TREE [参数] [路径]        显示目录树
   TYPE [文件]               查看文本文件
@@ -1180,9 +1307,10 @@ $CMD_delimiter
   DF              显示磁盘使用情况
   GETPROP [KEY]   系统属性(空KEY分页显示全部)
   ENV/EXPORT      环境变量(空参数帮助)
+  EXTS [参数]     显示当前终端可执行文件
   LOGCAT          系统日志相关功能
   PATH            显示PATH变量
-  UPTIME          系统运行时间
+  UPTIME [参数]   系统运行时间
   RES/WM          显示屏幕相关信息(WM详细,RES兼容)
   BATT            显示电池信息
   SYSTEMINFO      系统信息
@@ -1198,11 +1326,11 @@ $CMD_delimiter
   PWD             显示当前工作目录
   SDIR            显示脚本所在目录
   SELF            显示当前脚本路径
-
+//cecho -c "#C0C0C0" '  #输入的命令将展开\$pwd/\$sdir/\$self/\$0'
 //cecho -b "网络"
   NETSTAT           网络连接统计
   HOSTNAME          显示主机名
-  DNS [IPV4/域名]   相互转换IPV4或域名
+  DNS [参数] [IPV4/域名]    相互转换IPV4或域名
   NETNEIG           扫描局域网下的主机
   FTP [参数]        FTP功能
   PING [参数]       测试网络连接
@@ -1258,50 +1386,12 @@ $CMD_delimiter
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
   ULIMIT [参数] [限制值]        限制SHELL
   SH <脚本路径> [参数]          执行外部 SHELL 脚本
-  C/CMD <系统命令> [参数]       执行任意系统命令
-  FUN/FUNCTION [函数体]         临时定义函数(重启后失效,同名覆盖)
+  C/CMD <系统命令> [参数]       执行任意系统命令(无参数系统交互)
+  FUN/FUNCTION [参数] [函数体]  临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
   KILL [-9/-15/-2] <PID>        终止指定进程
 $CMD_delimiter
-EOF
-}
-
-# ------CMDINFO------
-cmd_cmdinfo() {
-cecho -b "--- 关于 Android CMD ---"
-    ccat << EOF
-版本: $CMD_VER
-作者: DC10Xray
-许可证: MIT   Copyright (c) 2026 DC10Xray
-QQ: 3896444757
-电子邮件: 3896444757@qq.com
-//cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
-EOF
-    cecho -b "--- MIT ---"
-    ccat << "EOF"
-//cecho -b "MIT License"
-
-Copyright (c) 2026 DC10Xray
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
 EOF
 }
 
@@ -1430,23 +1520,25 @@ cmd_echo() {
     fi
 }
 
-# ---------- CECHO 命令 ----------
 cmd_cecho() {
     # 显示帮助
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        cecho -b "用法: CECHO [参数] [消息]"
+        cecho -b "参数:"
+        ccat << "EOF"
+-n               不换行
+-c <颜色>        设置前景色 (两位数字颜色码或 #RRGGBB 十六进制)
+-cb <颜色>       设置背景色 (两位数字颜色码或 #RRGGBB 十六进制)
+-c256 <0-255>    设置256色前景色
+-cb256 <0-255>   设置256色背景色
+-b               粗体
+-i               斜体
+-u               下划线
+-s               删除线
+-r               纯文本模式 (忽略所有样式和颜色)
+-h, --help       显示本帮助
 
-cecho -b "用法: CECHO [参数] [消息]"
-cecho -b "参数:"
-ccat << "EOF"
--n              不换行
--c <颜色>       设置前景色 (数字颜色码或十六进制码)
--cb <颜色>      设置背景色 (数字颜色码或十六进制码)
--b              粗体
--i              斜体
--u              下划线
--s              删除线
--r              纯文本模式 (忽略所有样式和颜色)
--h, --help      显示本帮助
+//cecho -c 90 "注意: -c/-cb 与 -c256/-cb256 不能同时使用"
 EOF
         return 0
     fi
@@ -1455,6 +1547,8 @@ EOF
     local opt_n=false
     local custom_fg=""
     local custom_bg=""
+    local custom_fg256=""
+    local custom_bg256=""
     local bold=0
     local italic=0
     local underline=0
@@ -1478,6 +1572,18 @@ EOF
                     return 1
                 fi
                 custom_bg="$2"; shift 2 ;;
+            -c256)
+                if [ $# -lt 2 ]; then
+                    err "参数 -c256 需要指定颜色值"
+                    return 1
+                fi
+                custom_fg256="$2"; shift 2 ;;
+            -cb256)
+                if [ $# -lt 2 ]; then
+                    err "参数 -cb256 需要指定颜色值"
+                    return 1
+                fi
+                custom_bg256="$2"; shift 2 ;;
             -b) bold=1; shift ;;
             -i) italic=1; shift ;;
             -u) underline=1; shift ;;
@@ -1498,8 +1604,10 @@ EOF
     # 构建调用 _cprint 的参数列表
     local call_args=()
     [ "$opt_n" = true ] && call_args+=("-n")
-    [ -n "$custom_fg" ] && call_args+=("-c" "$custom_fg")
-    [ -n "$custom_bg" ] && call_args+=("-cb" "$custom_bg")
+    [ -n "$custom_fg" ]    && call_args+=("-c" "$custom_fg")
+    [ -n "$custom_bg" ]    && call_args+=("-cb" "$custom_bg")
+    [ -n "$custom_fg256" ] && call_args+=("-c256" "$custom_fg256")
+    [ -n "$custom_bg256" ] && call_args+=("-cb256" "$custom_bg256")
     [ "$bold" -eq 1 ] && call_args+=("-b")
     [ "$italic" -eq 1 ] && call_args+=("-i")
     [ "$underline" -eq 1 ] && call_args+=("-u")
@@ -2109,7 +2217,7 @@ cmd_format() {
 # ---------- awk包装 ----------
 cmd_awk() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: AWK [选项] '程序' [文件...]"
+        cecho -b "用法: AWK [参数] '程序' [文件...]"
         cecho "执行 awk 程序, 输出结果逐行着色"
         return 0
     fi
@@ -2131,7 +2239,7 @@ cmd_awk() {
 # ---------- grep包装 ----------
 cmd_grep() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: GREP [选项] 模式 [文件...]"
+        cecho -b "用法: GREP [参数] 模式 [文件...]"
         cecho "在文件或标准输入中搜索模式(保留颜色输出)"
         return 0
     fi
@@ -2161,7 +2269,7 @@ cmd_grep() {
 # ---------- sed包装 ----------
 cmd_sed() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: SED [选项] '脚本' [文件...]"
+        cecho -b "用法: SED [参数] '脚本' [文件...]"
         cecho "执行 sed 流编辑器, 输出逐行着色"
         return 0
     fi
@@ -2183,7 +2291,7 @@ cmd_sed() {
 # ---------- cut包装 ----------
 cmd_cut() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: CUT [选项] [文件...]"
+        cecho -b "用法: CUT [参数] [文件...]"
         cecho "按列或字段截取文本, 输出逐行着色"
         return 0
     fi
@@ -2627,6 +2735,156 @@ cmd_env() {
     esac
 }
 
+# ---------- 列出 PATH 中的可执行文件 ----------
+cmd_exts() {
+    local only_ext=0
+    local dirs_only=0
+    local show_path=0
+    local count_only=0
+    local search=""
+    local scan_dir=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                cecho -b "用法: EXTS [参数] [目录]"
+                cecho "列出可执行文件, 无目录时扫描 \$PATH"
+                cecho -b "参数"
+                cecho "  -e, --ext             只显示扩展目录(排除 /system 等系统目录)"
+                cecho "  -d, --dirs            只显示目录路径, 不列出文件"
+                cecho "  -p, --path            显示完整路径"
+                cecho "  -c, --count           只显示数量统计"
+                cecho "  -s, --search <关键词>  过滤包含关键词的命令"
+                cecho "  -h, --help            显示帮助"
+                return 0 ;;
+            -e|--ext)    only_ext=1; shift ;;
+            -d|--dirs)   dirs_only=1; shift ;;
+            -p|--path)   show_path=1; shift ;;
+            -c|--count)  count_only=1; shift ;;
+            -s|--search)
+                if [ $# -lt 2 ]; then err "参数 -s 需要关键词"; return 1; fi
+                search="$2"; shift 2 ;;
+            --) shift; break ;;
+            -*)
+                err "未知参数: $1, 使用 EXTS -h 查看帮助"
+                return 1 ;;
+            *)
+                if [ -n "$scan_dir" ]; then
+                    err "只能指定一个目录"
+                    return 1
+                fi
+                scan_dir="$1"; shift ;;
+        esac
+    done
+
+    # 确定要扫描的目录列表
+    local -a dirs=()
+    if [ -n "$scan_dir" ]; then
+        if [ ! -d "$scan_dir" ]; then
+            err "目录不存在: $scan_dir"
+            return 1
+        fi
+        dirs=("$scan_dir")
+    else
+        local IFS=':'
+        dirs=($PATH)
+        unset IFS
+    fi
+
+    # 系统目录前缀(视为系统命令)
+    _exts_is_sys() {
+        local d="$1"
+        case "$d" in
+            /system|/system/*|/vendor|/vendor/*|/apex|/apex/*|\
+            /product|/product/*|/odm|/odm/*|/sbin|/sbin/*|\
+            /data/adb/magisk|/data/adb/magisk/*|/data/adb/ksu|/data/adb/ksu/*)
+                return 0 ;;
+        esac
+        return 1
+    }
+
+    local total=0
+    local dir
+    for dir in "${dirs[@]}"; do
+        [ -z "$dir" ] && continue
+        [ -d "$dir" ] || continue
+        if [ $only_ext -eq 1 ] && _exts_is_sys "$dir"; then
+            continue
+        fi
+
+        # 收集该目录下的可执行文件
+        local -a names=()
+        local f bn
+        for f in "$dir"/*; do
+            [ -e "$f" ] || continue
+            [ -x "$f" ] || continue
+            [ -f "$f" ] || continue
+            bn="${f##*/}"
+            if [ -n "$search" ]; then
+                [[ "$bn" == *"$search"* ]] || continue
+            fi
+            names+=("$bn")
+        done
+
+        [ ${#names[@]} -eq 0 ] && continue
+
+        # 排序去重
+        local sorted
+        if command -v sort >/dev/null 2>&1; then
+            sorted=$(printf '%s\n' "${names[@]}" | sort -u)
+        else
+            sorted=$(printf '%s\n' "${names[@]}")
+        fi
+
+        local n
+        n=$(printf '%s\n' "$sorted" | awk 'END{print NR+0}')
+        total=$((total + n))
+
+        if [ $count_only -eq 1 ]; then
+            continue
+        fi
+
+        if [ $dirs_only -eq 1 ]; then
+            _cprint -c 96 "$dir/  ($n)"
+            continue
+        fi
+
+        # 标题: 系统目录 / 扩展目录
+        if _exts_is_sys "$dir"; then
+            _cprint -c 33 "[系统] $dir/  ($n)"
+        else
+            _cprint -c 92 "[扩展] $dir/  ($n)"
+        fi
+
+        # 每行 3 个
+        local col=0
+        local entry
+        while IFS= read -r bn; do
+            [ -z "$bn" ] && continue
+            if [ $show_path -eq 1 ]; then
+                entry="$dir/$bn"
+            else
+                entry="$bn"
+            fi
+            printf "  %-24s" "$entry"
+            col=$((col + 1))
+            if [ $col -ge 3 ]; then
+                echo ""
+                col=0
+            fi
+        done <<< "$sorted"
+        [ $col -gt 0 ] && echo ""
+        echo ""
+    done
+
+    if [ $count_only -eq 1 ]; then
+        cecho "可执行文件总数: $total"
+    elif [ $total -eq 0 ]; then
+        err "未找到任何可执行文件"
+        return 1
+    fi
+}
+
 cmd_watch() {
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ] || [ $# -lt 2 ]; then
         cecho -b "用法: WATCH <秒数> <命令> [参数]"
@@ -2851,6 +3109,225 @@ cmd_running() {
         cecho "已启动 $pkg"; return
     fi
     err "无法启动 $pkg"
+}
+
+# ---------- UPTIME 汉化 + 负载高亮 ----------
+# 中文运行时长转换(默认格式): "13 days, 22:09" → "13天, 22时09分"
+_translate_uptime() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+
+    if [[ "$s" =~ ^([0-9]+)[[:space:]]+days?,[[:space:]]+(.+)$ ]]; then
+        local days="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        rest="${rest%"${rest##*[![:space:]]}"}"
+        local rest_trans
+        if [[ "$rest" =~ ^([0-9]+):([0-9]+)$ ]]; then
+            rest_trans="${BASH_REMATCH[1]}时${BASH_REMATCH[2]}分"
+        elif [[ "$rest" =~ ^([0-9]+)[[:space:]]+min ]]; then
+            rest_trans="${BASH_REMATCH[1]}分钟"
+        else
+            rest_trans="$rest"
+        fi
+        printf '%s' "${days}天, ${rest_trans}"
+        return
+    fi
+    if [[ "$s" =~ ^([0-9]+)[[:space:]]+days?$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}天"; return
+    fi
+    if [[ "$s" =~ ^([0-9]+):([0-9]+)$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}时${BASH_REMATCH[2]}分"; return
+    fi
+    if [[ "$s" =~ ^([0-9]+)[[:space:]]+min ]]; then
+        printf '%s' "${BASH_REMATCH[1]}分钟"; return
+    fi
+    printf '%s' "$s"
+}
+
+# 中文运行时长转换(-p 美化格式): "1 week, 6 days, 22 hours, 19 minutes" → "1周, 6天, 22小时, 19分钟"
+_translate_pretty_uptime() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+
+    local out=""
+    local first=1
+    local IFS=','
+    local part
+    for part in $s; do
+        part="${part#"${part%%[![:space:]]*}"}"
+        part="${part%"${part##*[![:space:]]}"}"
+        [ -z "$part" ] && continue
+        if [[ "$part" =~ ^([0-9]+)[[:space:]]+(.+)$ ]]; then
+            local num="${BASH_REMATCH[1]}"
+            local unit="${BASH_REMATCH[2]}"
+            local unit_cn="$unit"
+            case "$unit" in
+                week|weeks)               unit_cn="周" ;;
+                day|days)                 unit_cn="天" ;;
+                hour|hours)               unit_cn="小时" ;;
+                minute|minutes|min|mins)  unit_cn="分钟" ;;
+                second|seconds|sec|secs)  unit_cn="秒" ;;
+            esac
+            [ $first -eq 0 ] && out+=", "
+            out+="${num}${unit_cn}"
+            first=0
+        else
+            [ $first -eq 0 ] && out+=", "
+            out+="$part"
+            first=0
+        fi
+    done
+    printf '%s' "$out"
+}
+
+# 根据负载与 CPU 核心数比值返回颜色码(空表示不高亮)
+# <0.7 绿(92), <1.0 黄(93), >=1.0 红(91)
+_load_color() {
+    local load="$1" cores="$2"
+    awk -v l="$load" -v c="$cores" 'BEGIN {
+        if (c <= 0) { exit }
+        r = l / c;
+        if (r < 0.7) print "92";
+        else if (r < 1.0) print "93";
+        else print "91";
+    }' 2>/dev/null
+}
+
+# 获取 CPU 核心数, 失败时输出空
+_get_cores() {
+    local cores=""
+    if command -v nproc >/dev/null 2>&1; then
+        cores=$(nproc 2>/dev/null)
+    fi
+    if [ -z "$cores" ] || ! [[ "$cores" =~ ^[0-9]+$ ]] || [ "$cores" -le 0 ]; then
+        cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+    fi
+    if [ -z "$cores" ] || ! [[ "$cores" =~ ^[0-9]+$ ]] || [ "$cores" -le 0 ]; then
+        cores=""
+    fi
+    printf '%s' "$cores"
+}
+
+# 输出负载行(带颜色), 参数: load1 load5 load15
+_uptime_print_load() {
+    local load1="$1" load5="$2" load15="$3"
+    local cores
+    cores=$(_get_cores)
+
+    if [ -z "$cores" ]; then
+        cecho "  最近1分钟, 5分钟, 10分钟的过载: ${load1}, ${load5}, ${load15}"
+        return
+    fi
+
+    local c1 c5 c15
+    c1=$(_load_color "$load1"  "$cores")
+    c5=$(_load_color "$load5"  "$cores")
+    c15=$(_load_color "$load15" "$cores")
+
+    printf "  最近1分钟, 5分钟, 10分钟的过载: "
+    if [ -n "$c1" ]; then _cprint -n -c "$c1" "$load1"; else printf "%s" "$load1"; fi
+    printf ", "
+    if [ -n "$c5" ]; then _cprint -n -c "$c5" "$load5"; else printf "%s" "$load5"; fi
+    printf ", "
+    if [ -n "$c15" ]; then _cprint -n -c "$c15" "$load15"; else printf "%s" "$load15"; fi
+    printf "\n"
+}
+
+# 原始输出(逐行着色)
+_uptime_raw_output() {
+    local raw="$1"
+    echo "$raw" | while IFS= read -r line; do cecho "$line"; done
+}
+
+cmd_uptime() {
+    local opt_p=0 opt_s=0 opt_v=0
+    local raw_args=()
+    local arg
+
+    for arg in "$@"; do
+        case "$arg" in
+            -p) opt_p=1; raw_args+=("-p") ;;
+            -s) opt_s=1; raw_args+=("-s") ;;
+            -v) opt_v=1 ;;
+            -h|--help)
+                cecho -b "用法: UPTIME [-p|-s] [-v]"
+                cecho "  (无参数)   默认格式, 已汉化"
+                cecho "  -p         美化输出(human readable), 已汉化"
+                cecho "  -s         显示系统启动时间, 已汉化"
+                cecho "  -v         输出原始输出(不汉化)"
+                return 0
+                ;;
+            *)
+                err "未知参数: $arg, 使用 UPTIME -h 查看帮助"
+                return 1
+                ;;
+        esac
+    done
+
+    if [ $opt_p -eq 1 ] && [ $opt_s -eq 1 ]; then
+        err "-p 和 -s 不能同时使用"
+        return 1
+    fi
+
+    local raw
+    raw=$($_UPTIME "${raw_args[@]}" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ] || [ -z "$raw" ]; then
+        err "无法获取运行时间"
+        return 1
+    fi
+
+    # -v: 原始输出优先(搭配时不汉化)
+    if [ $opt_v -eq 1 ]; then
+        _uptime_raw_output "$raw"
+        return 0
+    fi
+
+    # -s: 启动时间
+    if [ $opt_s -eq 1 ]; then
+        local boot
+        boot=$(echo "$raw" | head -1 | tr -d '\n\r')
+        boot="${boot#"${boot%%[![:space:]]*}"}"
+        boot="${boot%"${boot##*[![:space:]]}"}"
+        cecho "  系统启动时间: ${boot}"
+        return 0
+    fi
+
+    # -p: 美化格式
+    if [ $opt_p -eq 1 ]; then
+        if [[ "$raw" =~ ^[[:space:]]*up[[:space:]]+(.+),[[:space:]]+load[[:space:]]+averages?:[[:space:]]+([0-9.]+),[[:space:]]+([0-9.]+),[[:space:]]+([0-9.]+) ]]; then
+            local up_str="${BASH_REMATCH[1]}"
+            local l1="${BASH_REMATCH[2]}"
+            local l5="${BASH_REMATCH[3]}"
+            local l15="${BASH_REMATCH[4]}"
+            local up_cn
+            up_cn=$(_translate_pretty_uptime "$up_str")
+            cecho "  已经运行${up_cn}"
+            _uptime_print_load "$l1" "$l5" "$l15"
+        else
+            _uptime_raw_output "$raw"
+        fi
+        return 0
+    fi
+
+    # 默认格式
+    if [[ "$raw" =~ ^[[:space:]]*([0-9:]+)[[:space:]]+up[[:space:]]+(.+),[[:space:]]+([0-9]+)[[:space:]]+users?,[[:space:]]+load[[:space:]]+averages?:[[:space:]]+([0-9.]+),[[:space:]]+([0-9.]+),[[:space:]]+([0-9.]+) ]]; then
+        local t="${BASH_REMATCH[1]}"
+        local up_str="${BASH_REMATCH[2]}"
+        local users="${BASH_REMATCH[3]}"
+        local l1="${BASH_REMATCH[4]}"
+        local l5="${BASH_REMATCH[5]}"
+        local l15="${BASH_REMATCH[6]}"
+        local up_cn
+        up_cn=$(_translate_uptime "$up_str")
+        cecho "  自${t} 已经运行${up_cn}, ${users}个用户"
+        _uptime_print_load "$l1" "$l5" "$l15"
+    else
+        _uptime_raw_output "$raw"
+    fi
 }
 
 cmd_systeminfo() {
@@ -3269,18 +3746,54 @@ cmd_adb() {
     fi
 }
 
+# ---------- CMD/C ----------
 cmd_cmd() {
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: C/CMD <系统命令> [参数]"
-        cecho "示例: C/CMD ls -l"
+    # 帮助
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        cecho -b "用法: "
+        cecho "  C/CMD <命令> [参数]    执行系统命令"
+        cecho "  C/CMD                  进入系统交互"
+        cecho "  C/CMD -h/--help       显示此帮助"
         return 0
     fi
 
+    # 无参数: 动态获取当前 shell 并进入交互模式
     if [ $# -eq 0 ]; then
-        err "用法: C/CMD <系统命令> [参数]"
-        return 1
+        local shell_bin=""
+
+        # 优先 /proc/$$/exe, 其次 $BASH, 再次 $0, 最后 sh
+        if [ -L "/proc/$$/exe" ]; then
+            shell_bin=$(readlink -f "/proc/$$/exe" 2>/dev/null)
+        fi
+        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
+            shell_bin="$BASH"
+        fi
+        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
+            if [ -x "$0" ]; then
+                shell_bin="$0"
+            else
+                shell_bin=$(command -v "$0" 2>/dev/null)
+            fi
+        fi
+        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
+            shell_bin="sh"
+        fi
+
+        # 路径超过 10 字符则截断显示, 执行仍用完整路径
+        local shell_disp="$shell_bin"
+        [ ${#shell_disp} -gt 20 ] && shell_disp="...${shell_disp: -17}"
+
+        cecho -b "进入交互模式 [$shell_disp] (exit 或 Ctrl+D 退出)"
+        cecho "$CMD_delimiter"
+
+        "$shell_bin" -i
+        local exit_code=$?
+
+        cecho "已退出系统交互(退出码: $exit_code)"
+        return $exit_code
     fi
 
+    # 有参数: 原样执行
     if ! confirm "确认要执行这个命令吗?(请确认命令是否安全!)"; then
         echo ""
         return 0
@@ -3311,22 +3824,96 @@ cmd_cmd() {
     fi
 }
 
+# 记录通过 FUN 定义的函数名(重启后失效)
+USER_DEFINED_FUNCS=()
 cmd_fun() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: FUN [函数体]"
-        cecho "  无参数     进入交互模式(多行输入, Ctrl+D 结束)"
-        cecho "  有参数     直接将参数作为函数体定义(单行)"
-        cecho "示例: hello() { echo 'Hello'; }"
-        err "如果你输入的函数名已为内置命令, 那么内置命令会被覆盖"
+        cecho -b "用法: FUN [参数] [函数体]"
+        cecho -b "参数:"
+        cecho "  -h, --help           显示本帮助"
+        cecho "  -l, --list           列出已定义函数"
+        cecho "  -d, --delete <名称>  删除指定函数"
+        cecho "  -r, --remove        删除全部函数"
+        cecho -b "定义函数:"
+        cecho "  FUN                  交互模式(多行输入, Ctrl+D 结束)"
+        cecho "  FUN [函数体]         单行定义"
+        cecho "示例: FUN hello() { echo 'Hello'; }"
+        err "注意: 同名函数/内建/命令会被覆盖, 覆盖后原定义不可恢复"
         return 0
+    fi
+
+    if [[ "$1" == "-l" || "$1" == "--list" ]]; then
+        if [ ${#USER_DEFINED_FUNCS[@]} -eq 0 ]; then
+            err "未找到用户函数"
+            return 0
+        fi
+        cecho -b "已定义函数: "
+        local i=1 f
+        for f in "${USER_DEFINED_FUNCS[@]}"; do
+            if type -t "$f" >/dev/null 2>&1; then
+                cecho "  $i. $f"
+            else
+                cecho "  $i. $f (已失效)"
+            fi
+            ((i++))
+        done
+        return 0
+    fi
+
+    if [[ "$1" == "-d" || "$1" == "--delete" ]]; then
+        shift
+        if [ $# -eq 0 ] || [ -z "$1" ]; then
+            err "用法: FUN -d <函数名>"
+            return 1
+        fi
+        local target="$1" found=0 f
+        for f in "${USER_DEFINED_FUNCS[@]}"; do
+            [ "$f" = "$target" ] && { found=1; break; }
+        done
+        if [ $found -eq 0 ]; then
+            err "未找到函数: $target"
+            return 1
+        fi
+        if ! confirm "删除 $target?"; then
+            return 0
+        fi
+        unset -f "$target" 2>/dev/null
+        local new_list=()
+        for f in "${USER_DEFINED_FUNCS[@]}"; do
+            [ "$f" != "$target" ] && new_list+=("$f")
+        done
+        USER_DEFINED_FUNCS=("${new_list[@]}")
+        cecho "已删除: $target"
+        return 0
+    fi
+
+    if [[ "$1" == "-r" || "$1" == "--remove-all" ]]; then
+        if [ ${#USER_DEFINED_FUNCS[@]} -eq 0 ]; then
+            err "未找到用户函数"
+            return 0
+        fi
+        if ! confirm "删除全部 ${#USER_DEFINED_FUNCS[@]} 个函数?"; then
+            return 0
+        fi
+        local cnt=${#USER_DEFINED_FUNCS[@]} f
+        for f in "${USER_DEFINED_FUNCS[@]}"; do
+            unset -f "$f" 2>/dev/null
+        done
+        USER_DEFINED_FUNCS=()
+        cecho "已删除 $cnt 个函数"
+        return 0
+    fi
+
+    if [[ "$1" == -* ]]; then
+        err "未知参数: $1"
+        return 1
     fi
 
     local func_body=""
     if [ $# -eq 0 ]; then
-        cecho "输入函数体(按 Ctrl+D 结束):"
+        cecho "输入函数体(按 Ctrl+D 结束): "
         func_body=$(cat)
     else
-        # 直接使用参数作为函数体
         func_body="$*"
     fi
 
@@ -3335,18 +3922,47 @@ cmd_fun() {
         return 1
     fi
 
-    # 尝试定义函数
-    if eval "$func_body" 2>/dev/null; then
-        # 提取函数名(支持 function name {} 和 name() {}
-        local func_name
-        func_name=$(echo "$func_body" | grep -oE '^[[:space:]]*(function[[:space:]]+)?([a-zA-Z_][a-zA-Z0-9_]*)' | head -1 | awk '{print $NF}')
-        if [ -n "$func_name" ] && type -t "$func_name" >/dev/null 2>&1; then
-            cecho "函数 '$func_name' 已定义, 可通过 '$func_name' 调用"
-        else
-            cecho "函数定义已加载, 可通过函数名调用"
+    local func_name=""
+    local trimmed="${func_body#"${func_body%%[![:space:]]*}"}"
+    if [[ "$trimmed" =~ ^function[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]]; then
+        func_name="${BASH_REMATCH[1]}"
+    elif [[ "$trimmed" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\(\) ]]; then
+        func_name="${BASH_REMATCH[1]}"
+    fi
+
+    if [ -z "$func_name" ]; then
+        err "无法识别函数名"
+        return 1
+    fi
+
+    local exist_type
+    exist_type=$(type -t "$func_name" 2>/dev/null)
+    if [ -n "$exist_type" ]; then
+        local type_desc=""
+        case "$exist_type" in
+            function) type_desc="函数" ;;
+            builtin)  type_desc="bash 内建" ;;
+            keyword)  type_desc="保留字" ;;
+            alias)    type_desc="别名" ;;
+            file)     type_desc="外部命令" ;;
+            *)        type_desc="$exist_type" ;;
+        esac
+        err "已存在同名定义: $func_name ($type_desc)"
+        err "覆盖后不可逆"
+        if ! confirm "覆盖 $func_name?"; then
+            return 0
         fi
+    fi
+
+    if eval "$func_body" 2>/dev/null; then
+        local already=0 f
+        for f in "${USER_DEFINED_FUNCS[@]}"; do
+            [ "$f" = "$func_name" ] && { already=1; break; }
+        done
+        [ $already -eq 0 ] && USER_DEFINED_FUNCS+=("$func_name")
+        cecho "已定义: $func_name"
     else
-        err "函数定义失败, 请检查语法"
+        err "定义失败, 请检查语法"
         return 1
     fi
 }
@@ -3789,7 +4405,6 @@ while true; do
     exitk|killself)    cmd_killself ;;
     cmdinfo|info)      cmd_cmdinfo ;;
     etc|config)        cmd_config "${args_array[@]}" ;;
-    ctrl+c)            cmd_exit15_0 ;;
     c|cmd)             cmd_cmd "${args_array[@]}" ;;
     fun|function)      cmd_fun "${args_array[@]}" ;;
     # ---------- 显式调用 ----------
@@ -3798,7 +4413,6 @@ while true; do
     scriptdir|sdir)    cecho "$SCRIPT_DIR" ;;
     pwd)               cecho "$(pwd)" ;;
     self)              cecho "$0" ;;
-    uptime)            $_UPTIME 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
     netstat)           $_NETSTAT 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
     hostname)          cecho "$($_HOSTNAME 2>/dev/null || echo 'localhost')" ;;
     printf)            printf "${args_array[@]}"; echo "" ;;
@@ -3810,7 +4424,11 @@ while true; do
     debug_1)                    err "No Way" ;;
     debug_2|debug_wc|codewcme)  debug_2 ;;
     debug_0|debug_lev)          debug_0 ;;
+    # brooooooo
     $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
+    $USERNAME)    cmd_username ;;
+    911)          err "bro 这并不好笑" ;;
+    ctrl+c|^c)    cmd_exit15_0 ;;
     # ---------- SP ----------
     114514)     lazy_load "laugh_114514" && cmd_laugh_114514 ;;
     100|dve100) lazy_load "laugh_100" && cmd_laugh_100 ;;
