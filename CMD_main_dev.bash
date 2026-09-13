@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.21 (dev0.279)"
+CMD_VER="0.21.1 (dev0.283)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -1108,7 +1108,7 @@ cmd_resource() {
                 return
             fi
 
-            # 函数名(可不带 cmd_ 前缀）
+            # 函数名(可不带 cmd_ 前缀)
             local name="$arg"
             [[ "$name" != cmd_* ]] && name="cmd_$name"
             local found=0 new=()
@@ -1307,7 +1307,7 @@ $CMD_delimiter
   DF              显示磁盘使用情况
   GETPROP [KEY]   系统属性(空KEY分页显示全部)
   ENV/EXPORT      环境变量(空参数帮助)
-  EXTS [参数]     显示当前终端可执行文件
+  EXTS/EXES [参数]    显示当前终端可执行文件
   LOGCAT          系统日志相关功能
   PATH            显示PATH变量
   UPTIME [参数]   系统运行时间
@@ -1348,7 +1348,7 @@ $CMD_delimiter
   CRC32 <文件>              计算文件的CRC32(cksum)
   DIFF [参数] <1> <2>       比较两个文件/目录的差异
   ZIPDUFF [参数] <源> <新>  比较两个ZIP文件的差异
-  JSON -w/[参数] <目标>     检验JSON有效性(需要jq/py/bash)
+  JSON -w/[参数] <目标>     检验JSON有效性(jq/py/bash)
   PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集] ⤸
   -生成符合要求的随机密码
   RAND [长度]               生成随机数(默认四位数)
@@ -1387,6 +1387,7 @@ $CMD_delimiter
   ULIMIT [参数] [限制值]        限制SHELL
   SH <脚本路径> [参数]          执行外部 SHELL 脚本
   C/CMD <系统命令> [参数]       执行任意系统命令(无参数系统交互)
+  BASH <参数>                  调用系统 BASH 程序(无参数进入交互)
   FUN/FUNCTION [参数] [函数体]  临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
@@ -3087,7 +3088,7 @@ cmd_tasklist() {
 # RUNNING
 cmd_running() {
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        ececho -b "用法: RUNNING <包名>"
+        cecho -b "用法: RUNNING <包名>"
         cecho "示例: RUNNING com.android.settings"
         return 0
     fi
@@ -3824,6 +3825,44 @@ cmd_cmd() {
     fi
 }
 
+cmd_bash() {
+    if [ $# -eq 0 ]; then
+        cmd_cmd
+        return $?
+    fi
+
+    # 有参数: 确认
+    if ! confirm "确认要执行这个命令吗?(请确认命令是否安全!)"; then
+        echo ""
+        return 0
+    fi
+
+    # 执行真正的 bash, 带信号处理
+    local old_trap=$(trap -p INT)
+    local child_pid=""
+    local interrupted=0
+    trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
+    command bash "$@" &
+    child_pid=$!
+    wait "$child_pid"
+    local exit_code=$?
+    eval "$old_trap" 2>/dev/null || trap - INT
+
+    if [ $interrupted -eq 1 ]; then
+        echo ""
+        cecho "命令被中断"
+        return 130
+    elif [ $exit_code -ne 0 ]; then
+        echo ""
+        err "命令以退出码 $exit_code 退出"
+        return $exit_code
+    else
+        echo ""
+        cecho "命令执行完毕"
+        return 0
+    fi
+}
+
 # 记录通过 FUN 定义的函数名(重启后失效)
 USER_DEFINED_FUNCS=()
 cmd_fun() {
@@ -3833,7 +3872,7 @@ cmd_fun() {
         cecho "  -h, --help           显示本帮助"
         cecho "  -l, --list           列出已定义函数"
         cecho "  -d, --delete <名称>  删除指定函数"
-        cecho "  -r, --remove        删除全部函数"
+        cecho "  -r, --remove         删除全部函数"
         cecho -b "定义函数:"
         cecho "  FUN                  交互模式(多行输入, Ctrl+D 结束)"
         cecho "  FUN [函数体]         单行定义"
@@ -3887,7 +3926,7 @@ cmd_fun() {
         return 0
     fi
 
-    if [[ "$1" == "-r" || "$1" == "--remove-all" ]]; then
+    if [[ "$1" == "-r" || "$1" == "--remove" ]]; then
         if [ ${#USER_DEFINED_FUNCS[@]} -eq 0 ]; then
             err "未找到用户函数"
             return 0
@@ -4380,7 +4419,7 @@ while true; do
     args_array=("${PARSED_ARGS[@]:1}")
 
     # 命令分发(按照命令列表顺序)
-    # 大部分命令直接通过lazy load加载
+    # 大部分命令直接通过lazy load加载(在lazy load的内部检查函数是否已定义, 如果已经定义就直接加载, 不需要写在这)
     case "$cmd" in
     # ---------- 内部别名 ----------
     copy|cp)           cmd_copy "${args_array[@]}" ;;
@@ -4395,6 +4434,7 @@ while true; do
     dd|diskdd)         cmd_dd "${args_array[@]}" ;;
     now|date|time|datetime)  cecho "$($_DATE "+%Y-%m-%d %H:%M:%S (%A)")" ;;
     env|export)        cmd_env "${args_array[@]}" ;;
+    exts|exes)         cmd_exts "${args_array[@]}" ;;
     systeminfo|sysinfo)  cmd_systeminfo ;;
     tl|tasklist)       cmd_tasklist ;;
     help|/? )          cmd_help ;;
@@ -4455,20 +4495,25 @@ while true; do
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
-    # ---------- 自定义函数 / 懒惰加载 / 未知命令 ----------
+    # ---------- 自定义函数 / 懒惰加载 /系统命令 / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
     if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
         "$cmd" "${args_array[@]}"
     else
-        # 否则尝试加载资源文件中的函数
+        # 尝试加载资源文件中的函数
         if lazy_load "$cmd"; then
             "cmd_$cmd" "${args_array[@]}"
         else
-            err "$cmd: 命令未找到"
+            # 尝试调用系统命令
+            if command -v "$cmd" >/dev/null 2>&1; then
+                cecho -c 90 "系统命令: $cmd"
+                "$cmd" "${args_array[@]}"
+            else
+                err "$cmd: 命令未找到"
+            fi
         fi
     fi
     ;;
 esac
 done
-#null
