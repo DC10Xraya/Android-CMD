@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.21.1 (dev0.283)"
+CMD_VER="0.21.2 (dev0.287)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -394,14 +394,11 @@ ccat() {
         input_file="/dev/stdin"
     elif [ $# -eq 1 ]; then
         local user_path="$1"
-        # 如果已经是绝对路径, 直接使用
         if [[ "$user_path" = /* ]]; then
             input_file="$user_path"
         else
-            # 先尝试当前目录
             if [ -f "$user_path" ]; then
                 input_file="$user_path"
-            # 再尝试脚本目录
             elif [ -f "$SCRIPT_DIR/$user_path" ]; then
                 input_file="$SCRIPT_DIR/$user_path"
             else
@@ -409,7 +406,6 @@ ccat() {
                 return 1
             fi
         fi
-        # 最后确认确实是普通文件
         if [ ! -f "$input_file" ]; then
             err "ccat: 不是普通文件: $input_file"
             return 1
@@ -419,8 +415,19 @@ ccat() {
         return 1
     fi
 
+    # 接管 INT trap: 允许在输出过程中随时 Ctrl+C 中断
+    local old_int_trap
+    old_int_trap=$(trap -p INT)
+    local _ccat_interrupted=0
+    trap '_ccat_interrupted=1' INT
+
     local line
     while IFS= read -r line; do
+        # 每行开头检查中断标志
+        if [ "$_ccat_interrupted" -eq 1 ]; then
+            break
+        fi
+
         if [[ "$line" =~ ^[[:space:]]*//cecho[[:space:]]+(.*) ]]; then
             local args="${BASH_REMATCH[1]}"
             if [[ ! "$args" =~ .*[\'\"][^\'\"]*[\'\"]$ ]]; then
@@ -437,6 +444,18 @@ ccat() {
             cecho "$line"
         fi
     done < "$input_file"
+
+    # 恢复原来的 INT trap
+    if [ -n "$old_int_trap" ]; then
+        eval "$old_int_trap"
+    else
+        trap - INT
+    fi
+
+    if [ "$_ccat_interrupted" -eq 1 ]; then
+        return 130
+    fi
+    return 0
 }
 
 # -------- 懒惰加载 --------
@@ -1386,14 +1405,90 @@ $CMD_delimiter
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
   ULIMIT [参数] [限制值]        限制SHELL
   SH <脚本路径> [参数]          执行外部 SHELL 脚本
-  C/CMD <系统命令> [参数]       执行任意系统命令(无参数系统交互)
-  BASH <参数>                  调用系统 BASH 程序(无参数进入交互)
+  C/CMD/EVAL <系统命令> [参数]  执行任意系统命令(无参数系统交互)
+  BASH <参数>                   调用系统 BASH 程序(无参数进入交互)
   FUN/FUNCTION [参数] [函数体]  临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
   KILL [-9/-15/-2] <PID>        终止指定进程
 $CMD_delimiter
 EOF
+}
+
+cmd_now() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cecho -b "用法: NOW [参数]"
+        cecho "  (无参数)             默认格式: YYYY-MM-DD HH:MM:SS (AA)"
+        cecho "  -f <格式>            按 date 格式串输出(如 %Y-%m-%d)"
+        cecho "  -fp <人性化格式>     按指定格式输出, 人性化格式"
+        cecho "  -u                   使用 UTC 时间"
+        cecho "  -v                   输出系统 date 默认格式(原始)"
+        cecho "  -h, --help           显示此帮助"
+        cecho -b "人性化格式(-fp)占位符:"
+        cecho "  YYYY=年  YY=两位年  MM=月  DD=日"
+        cecho "  HH=24时  hh=12时  mm=分  ss=秒"
+        cecho "  AA=星期全称  aa=星期缩写"
+        return 0
+    fi
+
+    local fmt="%Y-%m-%d %H:%M:%S (%A)"
+    local fmt_set=0
+    local utc=0
+    local raw=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f)
+                if [ $# -lt 2 ]; then
+                    err "参数 -f 需要格式串"
+                    return 1
+                fi
+                fmt="$2"; fmt_set=1; shift 2 ;;
+            -fp)
+                if [ $# -lt 2 ]; then
+                    err "参数 -fp 需要人性化格式串"
+                    return 1
+                fi
+                fmt=$(_now_human_fmt "$2")
+                fmt_set=1; shift 2 ;;
+            -u) utc=1; shift ;;
+            -v) raw=1; shift ;;
+            *)
+                err "未知参数: $1, 使用 NOW -h 查看帮助"
+                return 1 ;;
+        esac
+    done
+
+    # -v 与其他选项互斥
+    if [ $raw -eq 1 ] && { [ $utc -eq 1 ] || [ $fmt_set -eq 1 ]; }; then
+        err "-v 不能与 -f/-fp/-u 同时使用"
+        return 1
+    fi
+
+    if [ $raw -eq 1 ]; then
+        $_DATE
+        return $?
+    fi
+
+    if [ $utc -eq 1 ]; then
+        cecho "$($_DATE -u "+$fmt" 2>/dev/null)"
+    else
+        cecho "$($_DATE "+$fmt" 2>/dev/null)"
+    fi
+}
+
+# 人性化格式转 date 格式串
+_now_human_fmt() {
+    printf '%s' "$1" | sed \
+        -e 's/YYYY/%Y/g' \
+        -e 's/YY/%y/g' \
+        -e 's/MM/%m/g' \
+        -e 's/DD/%d/g' \
+        -e 's/HH/%H/g' \
+        -e 's/hh/%I/g' \
+        -e 's/mm/%M/g' \
+        -e 's/ss/%S/g' \
+        -e 's/AA/%A/g' \
+        -e 's/aa/%a/g'
 }
 
 cmd_sleep() {
@@ -4286,7 +4381,6 @@ _update_check_count=0
 ) &
 
 cmd_update() {
-   CMD_GITHUB_Link="cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases""
     local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
     local json=""
     if command -v curl >/dev/null 2>&1; then
@@ -4310,6 +4404,7 @@ cmd_update() {
     fi
 
     local published_at=$(echo "$json" | grep published_at | cut -d':' -f2,3 | cut -d'"' -f2)
+    local html_url=$(echo "$json" | grep -m1 '"html_url"' | cut -d'"' -f4)
 
     remote_ver=$(_extract_ver "$tag_name")
     current_ver=$(_extract_ver "$CMD_VER")
@@ -4319,24 +4414,41 @@ cmd_update() {
         return 1
     fi
 
-    # 比较版本
+    # 版本比较
     if _ver_ge "$remote_ver" "$current_ver"; then
         if [ "$remote_ver" = "$current_ver" ]; then
             cecho -c 92 "已是最新版本 [当前: $remote_ver($tag_name)]"
-            $CMD_GITHUB_Link
+            cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
+            rm -f "$_update_cache"
+            return 0
+        fi
+        # 有新版本
+        cecho -c 96 "新版本: $remote_ver($tag_name) 当前: [$current_ver]"
+        [ -n "$published_at" ] && cecho -c 90 "发布时间(UTC): $published_at"
+
+        # 发行说明(仅新版本时显示)
+       local body=$(echo "$json" | sed -n 's/.*"body": "\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p')
+        if [ -n "$body" ]; then
+            cecho -b "发行说明:"
+            printf '%b\n' "$body" | while IFS= read -r line; do
+                cecho "$line"
+            done
+        fi
+
+        # 链接指向本次发行页
+        if [ -n "$html_url" ]; then
+            cecho -c "#6CA8F1" -u "$html_url"
         else
-            cecho -c 96 "新版本: $remote_ver($tag_name) 当前: [$current_ver]"
-            [ -n "$published_at" ] && cecho -c 90 "发布时间(UTC): $published_at"
-            $CMD_GITHUB_Link
+            cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
         fi
     else
-        # 远程版本小于当前版本
+        # 仓库版本反而更旧
         err "未知的版本, 大于仓库的最新版本!"
+        err "这可能意味着您在使用非官方版本或者开发版本!"
         cecho -c 93 "当前版本: $current_ver, 仓库最新: $remote_ver($tag_name)"
-        $CMD_GITHUB_Link
+        cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
     fi
 
-    # 执行完后立即删除缓存
     rm -f "$_update_cache"
 }
 
@@ -4432,7 +4544,7 @@ while true; do
     head|h)            cmd_head "${args_array[@]}" ;;
     tail|t)            cmd_tail "${args_array[@]}" ;;
     dd|diskdd)         cmd_dd "${args_array[@]}" ;;
-    now|date|time|datetime)  cecho "$($_DATE "+%Y-%m-%d %H:%M:%S (%A)")" ;;
+    now|date|time|datetime)  cmd_now "${args_array[@]}" ;;
     env|export)        cmd_env "${args_array[@]}" ;;
     exts|exes)         cmd_exts "${args_array[@]}" ;;
     systeminfo|sysinfo)  cmd_systeminfo ;;
@@ -4445,7 +4557,7 @@ while true; do
     exitk|killself)    cmd_killself ;;
     cmdinfo|info)      cmd_cmdinfo ;;
     etc|config)        cmd_config "${args_array[@]}" ;;
-    c|cmd)             cmd_cmd "${args_array[@]}" ;;
+    c|cmd|eval)        cmd_cmd "${args_array[@]}" ;;
     fun|function)      cmd_fun "${args_array[@]}" ;;
     # ---------- 显式调用 ----------
     df)                $_DF -h 2>&1 | while IFS= read -r line; do cecho "$line"; done ;;
@@ -4495,7 +4607,7 @@ while true; do
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
-    # ---------- 自定义函数 / 懒惰加载 /系统命令 / 未知命令 ----------
+    # ---------- 自定义函数 / 懒惰加载 / 系统命令 / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
     if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
