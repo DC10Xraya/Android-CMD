@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.21.2 (dev0.287)"
+CMD_VER="0.22 (dev0.300)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -1319,7 +1319,7 @@ $CMD_delimiter
   UMOUNT <设备或挂载点>               卸载文件系统
 
 //cecho -b "系统信息"
-  NOW             显示当前时钟
+  NOW [参数]          显示当前时钟
   CAL [模式/年] [月]  显示日历
   CLOCK           显示实时时间(每0.1s刷新)
   FREE            显示当前内存使用
@@ -1373,18 +1373,17 @@ $CMD_delimiter
   RAND [长度]               生成随机数(默认四位数)
 
 //cecho -b "杂项"
-  ECHO/PRINT [消息]       显示消息
-  PRINTF/ECHO -e          解析代码的显示消息
-  CECHO [参数] [消息]     ME自定义的显示消息
-  ERR [消息]              显示错误样式消息(红色)
-  YES [内容]              刷屏某一内容直至按下Ctrl+C
-  DUMP <目标> [输出]      扁平化文件夹结构(所有内容导出到TXT)
-  HACK <目标>             穷举可打印字符直到找到目标
-  HACK2 <目标>            同上,但是使用二分法
+  ECHO/PRINT [消息]          显示消息
+  PRINTF/ECHO -e             解析代码的显示消息
+  CECHO [参数] [消息]        CMD自定义的显示消息
+  ERR [消息]                 显示错误样式消息(红色)
+  YES [内容]                 刷屏某一内容直至按下Ctrl+C
+  DUMP <目标> [输出]         扁平化文件夹结构(所有内容导出到TXT)
+  HACK/HACK2 [参数] <目标>   穷举可打印字符直到找到目标(线性/二分搜索)
   AWKC <表达式>/<无参数进入交互>           AWK计算器
   BC [-s 精度] <表达式>/<无参数进入交互>   任意精度计算器
-  TIMER [秒数]/[时间戳]   倒计时/闹钟
-  SLEEP <秒数>            睡眠指定时间
+  TIMER [秒数]/[时间戳]         倒计时/闹钟
+  SLEEP <秒数>                  睡眠指定时间
   WATCH <秒数> <命令> [参数]    每隔指定时间清除屏幕并运行命令
   REPEAT <次数> <命令> [参数]   重复执行指定次数命令
   CMDTIME <命令> [参数]         测量命令执行耗时
@@ -1404,9 +1403,9 @@ $CMD_delimiter
   EXITK/KILLSELF                杀掉自己以退出
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
   ULIMIT [参数] [限制值]        限制SHELL
-  SH <脚本路径> [参数]          执行外部 SHELL 脚本
-  C/CMD/EVAL <系统命令> [参数]  执行任意系统命令(无参数系统交互)
-  BASH <参数>                   调用系统 BASH 程序(无参数进入交互)
+  SH [-M] <脚本路径> [参数]          执行外部 SHELL 脚本
+  C/CMD/EVAL [-M] <系统命令> [参数]  执行任意系统命令(无参数系统交互)
+  BASH [-M] <参数>                   调用系统 BASH 程序(无参数交互)
   FUN/FUNCTION [参数] [函数体]  临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
@@ -3849,7 +3848,73 @@ cmd_cmd() {
         cecho -b "用法: "
         cecho "  C/CMD <命令> [参数]    执行系统命令"
         cecho "  C/CMD                  进入系统交互"
+        cecho "  C/CMD -M               多行输入模式(每行独立执行, Ctrl+D开始)"
         cecho "  C/CMD -h/--help       显示此帮助"
+        return 0
+    fi
+
+    # -M 多行输入模式
+    if [ "$1" = "-M" ]; then
+        cecho -b "进入多行输入模式 (每行作为独立命令, 按顺序执行, 按 Ctrl+D 开始, Ctrl+C退出)"
+        cecho "$CMD_delimiter"
+
+        local old_trap
+        old_trap=$(trap -p INT)
+        local interrupted=0
+        trap 'interrupted=1' INT
+
+        local input_data
+        input_data=$(cat)
+        local cat_ret=$?
+
+        if [ $interrupted -eq 1 ] || [ $cat_ret -ne 0 ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            echo ""
+            return 130
+        fi
+
+        if [ -z "$input_data" ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            err "未输入任何内容"
+            return 1
+        fi
+
+        cecho "$CMD_delimiter"
+        cecho "开始按顺序执行:"
+
+        local line_num=0
+        local exec_count=0
+        local fail_count=0
+
+        while IFS= read -r line; do
+            line_num=$((line_num+1))
+            # 跳过空行 / 纯注释行
+            local trimmed="${line#"${line%%[![:space:]]*}"}"
+            [ -z "$trimmed" ] && continue
+            [[ "$trimmed" == \#* ]] && continue
+
+            if [ $interrupted -eq 1 ]; then
+                break
+            fi
+
+            _cprint -c 90 "[$line_num] $line"
+            eval "$line"
+            local ret=$?
+            if [ $ret -ne 0 ]; then
+                fail_count=$((fail_count+1))
+                err "第 $line_num 行执行失败 (退出码: $ret)"
+            fi
+            exec_count=$((exec_count+1))
+        done <<< "$input_data"
+
+        eval "$old_trap" 2>/dev/null || trap - INT
+
+        cecho "$CMD_delimiter"
+        if [ $interrupted -eq 1 ]; then
+            err "执行被中断 (已执行 $exec_count 行, 失败 $fail_count 行)"
+            return 130
+        fi
+        cecho "执行完毕: 共 $exec_count 行, 失败 $fail_count 行"
         return 0
     fi
 
@@ -3921,6 +3986,82 @@ cmd_cmd() {
 }
 
 cmd_bash() {
+    # 帮助
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        cecho -b "用法: "
+        cecho "  BASH                   进入 bash 交互模式"
+        cecho "  BASH <参数>            调用系统 bash 执行"
+        cecho "  BASH -M                多行脚本模式(Ctrl+D 后由 bash 执行)"
+        cecho "  BASH -h/--help         显示此帮助"
+        return 0
+    fi
+
+    # -M 多行脚本模式: 收集输入 -> 写入临时文件 -> 交给 bash 整体执行
+    if [ "$1" = "-M" ]; then
+        cecho -b "进入 BASH 多行脚本模式 (按 Ctrl+D 开始, Ctrl+C 取消)"
+        cecho "$CMD_delimiter"
+
+        local old_trap
+        old_trap=$(trap -p INT)
+        local interrupted=0
+        trap 'interrupted=1' INT
+
+        local input_data
+        input_data=$(cat)
+        local cat_ret=$?
+
+        if [ $interrupted -eq 1 ] || [ $cat_ret -ne 0 ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            echo ""
+            return 130
+        fi
+
+        if [ -z "$input_data" ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            err "未输入任何内容"
+            return 1
+        fi
+
+        cecho "$CMD_delimiter"
+
+        # 写入临时脚本文件
+        local tmp_script="$TMP_DIR/bash_M_$$_$(date +%s%N).sh"
+        if ! printf '%s\n' "$input_data" > "$tmp_script" 2>/dev/null; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            err "无法创建临时脚本文件"
+            return 1
+        fi
+
+        cecho "执行 bash 脚本 (临时文件: $tmp_script)"
+        cecho "$CMD_delimiter"
+
+        local child_pid=""
+        trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
+
+        command bash "$tmp_script" &
+        child_pid=$!
+        wait "$child_pid"
+        local exit_code=$?
+
+        eval "$old_trap" 2>/dev/null || trap - INT
+        rm -f "$tmp_script" 2>/dev/null
+
+        if [ $interrupted -eq 1 ]; then
+            echo ""
+            cecho "bash 脚本被用户中断"
+            return 130
+        elif [ $exit_code -ne 0 ]; then
+            echo ""
+            err "bash 脚本以退出码 $exit_code 退出"
+            return $exit_code
+        else
+            echo ""
+            cecho "bash 脚本执行完成"
+            return 0
+        fi
+    fi
+
+    # 无参数: 复用 cmd_cmd 的交互模式逻辑
     if [ $# -eq 0 ]; then
         cmd_cmd
         return $?
@@ -3954,6 +4095,117 @@ cmd_bash() {
     else
         echo ""
         cecho "命令执行完毕"
+        return 0
+    fi
+}
+
+cmd_sh() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
+        cecho -b "用法: SH <脚本路径> [参数]"
+        cecho "      SH -M              多行脚本编辑模式(Ctrl+D开始)"
+        return 0
+    fi
+
+    # -M 多行脚本编辑模式
+    if [ "$1" = "-M" ]; then
+        cecho -b "进入脚本编辑模式 (按 Ctrl+D 开始, Ctrl+C 取消)"
+        cecho "$CMD_delimiter"
+
+        local old_trap
+        old_trap=$(trap -p INT)
+        local interrupted=0
+        trap 'interrupted=1' INT
+
+        local input_data
+        input_data=$(cat)
+        local cat_ret=$?
+
+        if [ $interrupted -eq 1 ] || [ $cat_ret -ne 0 ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            echo ""
+            return 130
+        fi
+
+        if [ -z "$input_data" ]; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            err "未输入任何内容"
+            return 1
+        fi
+
+        cecho "$CMD_delimiter"
+
+        # 写入临时脚本文件
+        local tmp_script="$TMP_DIR/sh_M_$$_$(date +%s%N).sh"
+        if ! printf '%s\n' "$input_data" > "$tmp_script" 2>/dev/null; then
+            eval "$old_trap" 2>/dev/null || trap - INT
+            err "无法创建临时脚本文件"
+            return 1
+        fi
+
+        cecho "执行脚本 (临时文件: $tmp_script)"
+        cecho "$CMD_delimiter"
+
+        local child_pid=""
+        trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
+
+        sh "$tmp_script" &
+        child_pid=$!
+        wait "$child_pid"
+        local exit_code=$?
+
+        eval "$old_trap" 2>/dev/null || trap - INT
+        rm -f "$tmp_script" 2>/dev/null
+
+        if [ $interrupted -eq 1 ]; then
+            echo ""
+            cecho "脚本被用户中断"
+            return 130
+        elif [ $exit_code -ne 0 ]; then
+            echo ""
+            err "脚本以退出码 $exit_code 退出"
+            return $exit_code
+        else
+            echo ""
+            cecho "脚本执行完成"
+            return 0
+        fi
+    fi
+
+    # 原有的脚本文件执行逻辑
+    local script="$1"
+    shift
+    if [ ! -f "$script" ]; then
+        err "脚本文件不存在: $script"
+        return 1
+    fi
+    if [ ! -r "$script" ]; then
+        err "脚本文件不可读: $script"
+        return 1
+    fi
+    if ! confirm "确认要执行此脚本吗?(请确认脚本内不含危险代码!)"; then
+        return 0
+    fi
+    cecho "执行脚本: $script"
+    local old_trap=$(trap -p INT)
+    local child_pid=""
+    local interrupted=0
+    trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
+    sh "$script" "$@" &
+    child_pid=$!
+    wait "$child_pid"
+    local exit_code=$?
+    eval "$old_trap" 2>/dev/null || trap - INT
+    if [ $interrupted -eq 1 ]; then
+        echo ""
+        cecho "脚本被用户中断"
+        return 130
+    elif [ $exit_code -ne 0 ]; then
+        echo ""
+        err "脚本以退出码 $exit_code 退出"
+        return $exit_code
+    else
+        echo ""
+        cecho "脚本执行完成"
         return 0
     fi
 }
@@ -4098,49 +4350,6 @@ cmd_fun() {
     else
         err "定义失败, 请检查语法"
         return 1
-    fi
-}
-
-cmd_sh() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: SH <脚本路径> [参数]"
-        return 0
-    fi
-    local script="$1"
-    shift
-    if [ ! -f "$script" ]; then
-        err "脚本文件不存在: $script"
-        return 1
-    fi
-    if [ ! -r "$script" ]; then
-        err "脚本文件不可读: $script"
-        return 1
-    fi
-    if ! confirm "确认要执行此脚本吗?(请确认脚本内不含危险代码!)"; then
-        return 0
-    fi
-    cecho "执行脚本: $script"
-    local old_trap=$(trap -p INT)
-    local child_pid=""
-    local interrupted=0
-    trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
-    sh "$script" "$@" &
-    child_pid=$!
-    wait "$child_pid"
-    local exit_code=$?
-    eval "$old_trap" 2>/dev/null || trap - INT
-    if [ $interrupted -eq 1 ]; then
-        echo ""
-        cecho "脚本被用户中断"
-        return 130
-    elif [ $exit_code -ne 0 ]; then
-        echo ""
-        err "脚本以退出码 $exit_code 退出"
-        return $exit_code
-    else
-        echo ""
-        cecho "脚本执行完成"
-        return 0
     fi
 }
 
@@ -4493,9 +4702,11 @@ while true; do
         _update_check_count=$((_update_check_count + 1))
     fi
     fi
-   # 构建命令提示符
-    PROMPT_STR="\033[${BG};${CMD_prompt_fg___}m${USERNAME}${PROMPT_SYMBOL} \033[0m"
-    read -e -r -p "$(echo -e "$PROMPT_STR")" input
+   # 构建命令提示符(fix)
+   # 避免长输入时回绕、光标错位、提示符重复渲染
+   PROMPT_STR=$(printf '\001\033[%s;%sm\002%s%s \001\033[0m\002' \
+   "$BG" "$CMD_prompt_fg___" "$USERNAME" "$PROMPT_SYMBOL")
+    read -e -r -p "$PROMPT_STR" input
 
     # 判断空输入或纯注释
     ignore=0
@@ -4607,6 +4818,7 @@ while true; do
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
+    300|china)   lazy_load "china" && cmd_china "${args_array[@]}" ;;
     # ---------- 自定义函数 / 懒惰加载 / 系统命令 / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
