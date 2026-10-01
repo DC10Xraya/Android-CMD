@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.22_bug_a (dev0.307)"
+CMD_VER="0.22.1 (dev0.307)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
