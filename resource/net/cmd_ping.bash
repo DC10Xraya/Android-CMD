@@ -1,8 +1,8 @@
 #resource/cmd_ping.bash
+#Android CMD PING remake dev 2026_10_01
 cmd_ping() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-    cecho -b "用法: PING [-n 次数] [-nf/-inf 无限制] [-f 洪水] [-w 总超时(s)] [-W 单包超时(s)] [-i 间隔(s)] [-s 包大小(字节)] [-I 接口/IP] [-t TTL] [-v] [-q] <域名/IP>"
-    cecho "示例: PING -n 2 -w 2.5 -W 1 -i 0.5 -s 64 127.0.0.1"
+    cecho -b "用法: PING [-n] [-nf/-inf] [-f] [-w] [-W] [-i] [-s] [-I] [-t] [-4|-6] [-b] [-B] [-S] [-r] [-L] [-D] [-Dp] [-v] [-q] [-V] <域名/IP>"
     cecho "选项说明: "
     cecho "-n 次数          指定发送的次数(正整数,默认4)"
     cecho "-nf/-inf         无限制发送(不限制包数)"
@@ -13,8 +13,22 @@ cmd_ping() {
     cecho "-s 包大小(字节)  发送的数据包大小(1-65507,默认56)"
     cecho "-I 接口/IP       指定源接口或源IP地址"
     cecho "-t TTL           设置 IP 生存时间 (1-255)"
+    cecho "-4               强制使用 IPv4"
+    cecho "-6               强制使用 IPv6(优先ping -6,回退ping6)"
+    cecho "-b               允许 ping 广播地址"
+    cecho "-B               不改变探测包的源地址"
+    cecho "-S 缓冲区        设置发送缓冲区大小(字节)"
+    cecho "-r               绕过路由表直接发送到本地接口"
+    cecho "-L               抑制组播回环"
+    cecho "-D               显示 Unix 时间戳"
+    cecho "-Dp 格式         显示人性化时间戳, 默认 HH:mm:ss"
+    cecho "占位符: YYYY=年  YY=两位年  MM=月  DD=日"
+    cecho "       HH=24时  hh=12时  mm=分  ss=秒"
+    cecho "       AA=星期全称  aa=星期缩写"
+    cecho "       同时支持系统 date 格式"
     cecho "-v               直接显示系统的原始输出"
     cecho "-q               不显示每次回复, 只输出统计信息"
+    cecho "-V               显示 PING 函数版本和底层 ping 版本"
     return 0
 fi
 
@@ -28,6 +42,11 @@ fi
     local flood_mode=0
     local source_iface="" ttl_val=""
     local verbose=0 quiet=0
+    local ipv4=0 ipv6=0
+    local bcast_ok=0 no_src_change=0 bypass_route=0 no_mcast_loop=0
+    local sndbuf=""
+    local show_timestamp=0 timestamp_pretty=0 timestamp_format="HH:mm:ss"
+    local show_version=0
 
     # 临时存储解析过程中是否遇到 -s 或 -i(用于冲突检测)
     local opt_s_provided=0 opt_i_provided=0
@@ -102,6 +121,47 @@ fi
                     err "选项 -t 需要指定有效的 TTL 值 (1-255)"; valid_args=0; break
                 fi
                 ;;
+            -4)
+                ipv4=1; shift
+                ;;
+            -6)
+                ipv6=1; shift
+                ;;
+            -b)
+                bcast_ok=1; shift
+                ;;
+            -B)
+                no_src_change=1; shift
+                ;;
+            -S)
+                if [ $# -ge 2 ] && echo "$2" | grep -qE '^[0-9]+$' && [ "$2" -ge 1 ]; then
+                    sndbuf="$2"; shift 2
+                else
+                    err "选项 -S 需要指定有效的发送缓冲区大小(正整数)"; valid_args=0; break
+                fi
+                ;;
+            -r)
+                bypass_route=1; shift
+                ;;
+            -L)
+                no_mcast_loop=1; shift
+                ;;
+            -Dp)
+                show_timestamp=1
+                timestamp_pretty=1
+                # 自定义占位符 或 系统 date 格式(%开头) 均可作为格式串
+                if [ $# -ge 2 ] && echo "$2" | grep -qE 'YYYY|YY|MM|DD|HH|hh|mm|ss|AA|aa|%'; then
+                    timestamp_format="$2"; shift 2
+                else
+                    timestamp_format="HH:mm:ss"; shift
+                fi
+                ;;
+            -D)
+                show_timestamp=1; shift
+                ;;
+            -V)
+                show_version=1; shift
+                ;;
             -v)
                 verbose=1; shift
                 ;;
@@ -123,7 +183,7 @@ fi
 
     [ $valid_args -eq 0 ] && return 1
 
-    # ---------- 冲突检查(新增：-f 与 -n、-nf、-i、-s 互斥) ----------
+    # ---------- 冲突检查 ----------
     if [ $flood_mode -eq 1 ]; then
         if [ $has_n -eq 1 ]; then
             err "选项 -f (洪水模式) 和 -n (指定次数) 不能同时使用"; return 1
@@ -142,6 +202,40 @@ fi
     # -nf 和 -n 互斥
     if [ $has_nf -eq 1 ] && [ $has_n -eq 1 ]; then
         err "选项 -nf/-inf (无限制发送) 和 -n (指定次数) 不能同时使用"; return 1
+    fi
+
+    # -4 和 -6 互斥
+    if [ $ipv4 -eq 1 ] && [ $ipv6 -eq 1 ]; then
+        err "选项 -4 (强制IPv4) 和 -6 (强制IPv6) 不能同时使用"; return 1
+    fi
+
+    # -Dp 和 -v 互斥( -v 直接透传原始输出, 人性化时间戳包装不会生效 )
+    if [ $timestamp_pretty -eq 1 ] && [ $verbose -eq 1 ]; then
+        err "选项 -Dp (人性化时间戳) 和 -v (原始输出) 不能同时使用"; return 1
+    fi
+
+    # ---------- -V 版本信息 ----------
+    if [ $show_version -eq 1 ]; then
+        cecho -b "PING 函数版本: Android CMD PING remake dev 2026_10_01"
+        cecho "底层 ping 版本信息:"
+        local vout
+        vout=$(ping -V 2>&1)
+        if [ -n "$vout" ]; then
+            echo "$vout" | while IFS= read -r vline; do
+                cecho "    $vline"
+            done
+        else
+            err "    无法获取底层 ping 版本"
+        fi
+        if command -v ping6 >/dev/null 2>&1; then
+            cecho "ping6 (IPv6 回退方案):"
+            local vout6
+            vout6=$(ping6 -V 2>&1 | head -1)
+            [ -n "$vout6" ] && cecho "    $vout6"
+        else
+            cecho "未检测到 ping6"
+        fi
+        return 0
     fi
 
     [ -z "$target" ] && { err "需要指定目标 IP 地址或域名"; return 1; }
@@ -198,10 +292,77 @@ fi
         fi
     }
 
+    # 检测 ping 是否支持 -6 选项
+    can_use_ping_dash6() {
+        local output
+        output=$(ping -6 -c 1 -W 1 ::1 2>&1)
+        # 只要报的是"选项无效"类的错误, 就说明不支持 -6
+        if echo "$output" | grep -qiE "invalid option|unknown option|unrecognized option|usage:"; then
+            return 1
+        fi
+        return 0
+    }
+
+    # 检测 ping 是否支持 -D 选项(用于 -v 模式下透传系统时间戳)
+    can_use_ping_dashD() {
+        local output
+        output=$(ping -D -c 1 -W 1 127.0.0.1 2>&1)
+        if echo "$output" | grep -qiE "invalid option|unknown option|unrecognized option|usage:"; then
+            return 1
+        fi
+        return 0
+    }
+
+    get_time() {
+        if command -v perl >/dev/null 2>&1; then
+            perl -MTime::HiRes -e 'printf "%.3f", Time::HiRes::time' 2>/dev/null
+        elif date +%s.%N 2>/dev/null | grep -qE '^[0-9]+\.[0-9]+$'; then
+            date +%s.%N
+        elif [ -r /proc/uptime ]; then
+            awk '{print $1}' /proc/uptime 2>/dev/null
+        else
+            date +%s
+        fi
+    }
+
+    # 人性化时间戳: 自定义占位符 -> 系统 date 格式, 系统格式原样透传
+    format_timestamp() {
+        local fmt="$1"
+        fmt="${fmt//YYYY/%Y}"
+        fmt="${fmt//YY/%y}"
+        fmt="${fmt//MM/%m}"
+        fmt="${fmt//DD/%d}"
+        fmt="${fmt//HH/%H}"
+        fmt="${fmt//hh/%I}"
+        fmt="${fmt//mm/%M}"
+        fmt="${fmt//ss/%S}"
+        fmt="${fmt//AA/%A}"
+        fmt="${fmt//aa/%a}"
+        date +"$fmt" 2>/dev/null
+    }
+
+    # ---------- IPv6 回退方案检测 ----------
+    # 用户输入 -6 时: 先尝试 ping -6, 失败则回退到 ping6
+    local use_ping6=0
+    if [ $ipv6 -eq 1 ]; then
+        if ! can_use_ping_dash6; then
+            if command -v ping6 >/dev/null 2>&1; then
+                use_ping6=1
+            else
+                err "当前 ping 不支持 -6 选项, 且系统未找到 ping6, 无法使用 IPv6"
+                return 1
+            fi
+        fi
+    fi
+
     # ---------- 构建显示目标和解析后的 IP ----------
     local display_target="$target"
     local resolved_ip=""
-    if is_ip "$target"; then
+    if [ $ipv6 -eq 1 ]; then
+        # 强制 IPv6 时不做 IPv4 解析, 直接展示用户输入
+        display_target="$target"
+        resolved_ip="$target"
+    elif is_ip "$target"; then
         display_target="$target"
         resolved_ip="$target"
     else
@@ -218,6 +379,23 @@ fi
     # ---------- 构建 ping 命令 ----------
     local ping_cmd="ping"
     local data_bytes=56   # 默认显示, 会被后续覆盖
+    local icmp_header=28  # IPv4 头部 28 字节, IPv6 为 40
+
+    # IPv6 回退: 使用 ping6 命令时不再传 -6
+    if [ $use_ping6 -eq 1 ]; then
+        ping_cmd="ping6"
+        icmp_header=40
+    else
+        [ $ipv4 -eq 1 ] && ping_cmd="$ping_cmd -4"
+        [ $ipv6 -eq 1 ] && ping_cmd="$ping_cmd -6" && icmp_header=40
+    fi
+
+    # 全局附加选项(两种模式通用)
+    [ $bcast_ok -eq 1 ] && ping_cmd="$ping_cmd -b"
+    [ $no_src_change -eq 1 ] && ping_cmd="$ping_cmd -B"
+    [ $bypass_route -eq 1 ] && ping_cmd="$ping_cmd -r"
+    [ $no_mcast_loop -eq 1 ] && ping_cmd="$ping_cmd -L"
+    [ -n "$sndbuf" ] && ping_cmd="$ping_cmd -S $sndbuf"
 
     if [ $flood_mode -eq 1 ]; then
         if can_use_real_flood; then
@@ -260,6 +438,14 @@ fi
 
     # ---------- 处理 -v 模式 ----------
     if [ $verbose -eq 1 ]; then
+        # -v 与 -D 同用: 直接把系统 -D 透传给底层 ping
+        if [ $show_timestamp -eq 1 ] && [ $timestamp_pretty -eq 0 ]; then
+            if ! can_use_ping_dashD; then
+                err "当前 ping 不支持 -D 选项, 无法在 -v 模式下使用系统时间戳"
+                return 1
+            fi
+            ping_cmd="${ping_cmd% $target} -D $target"
+        fi
         local old_trap=$(trap -p INT)
         trap 'echo ""; return 130' INT
         eval "$ping_cmd"
@@ -273,18 +459,6 @@ fi
     fi
 
     # ---------- 正常模式 ----------
-    get_time() {
-        if command -v perl >/dev/null 2>&1; then
-            perl -MTime::HiRes -e 'printf "%.3f", Time::HiRes::time' 2>/dev/null
-        elif date +%s.%N 2>/dev/null | grep -qE '^[0-9]+\.[0-9]+$'; then
-            date +%s.%N
-        elif [ -r /proc/uptime ]; then
-            awk '{print $1}' /proc/uptime 2>/dev/null
-        else
-            date +%s
-        fi
-    }
-
     local tmp_stat="${TMP_DIR:-/storage/emulated/0/tmp}/ping_stat_$$_$RANDOM"
     mkdir -p "$(dirname "$tmp_stat")" 2>/dev/null
     > "$tmp_stat"
@@ -295,7 +469,10 @@ fi
         if [ $flood_mode -eq 1 ] && ! can_use_real_flood; then
             cecho "洪水模拟模式: 发送接近无限个包, 包大小${data_bytes}字节, 间隔0.2秒"
         fi
-        cecho "正在 Ping $display_target 具有 $data_bytes($(echo "$data_bytes+28" | bc)) 字节的数据:"
+        if [ $use_ping6 -eq 1 ]; then
+            cecho "已回退至 ping6"
+        fi
+        cecho "正在 Ping $display_target 具有 $data_bytes($(echo "$data_bytes+$icmp_header" | bc)) 字节的数据:"
     fi
 
     local interrupted=0
@@ -332,6 +509,10 @@ fi
                 err "目标 \"$target\" 不可达"
                 error_flag=1
                 break
+            elif echo "$line" | grep -qiE "invalid option|unknown option|unrecognized option"; then
+                err "底层 ping 拒绝执行: $line"
+                error_flag=1
+                break
             fi
 
             if echo "$line" | grep -q "packets transmitted"; then
@@ -342,11 +523,26 @@ fi
                 recv=$((recv + 1))
                 t=$(echo "$line" | grep -oE 'time[=<][0-9.]+' | grep -oE '[0-9.]+' | head -1)
                 ttl=$(echo "$line" | grep -oE 'ttl=[0-9]+' | cut -d= -f2)
+                # IPv6 用 hlim 替代 ttl
+                [ -z "$ttl" ] && ttl=$(echo "$line" | grep -oE 'hlim=[0-9]+' | cut -d= -f2)
                 [ -z "$ttl" ] && ttl="?"
+
+                # -D/-Dp: 自己加时间戳包装, 黄色渲染
+                local ts_prefix=""
+                if [ $show_timestamp -eq 1 ]; then
+                    if [ $timestamp_pretty -eq 1 ]; then
+                        ts_prefix="[$(format_timestamp "$timestamp_format")] "
+                    else
+                        ts_prefix="[$(get_time)] "
+                    fi
+                fi
 
                 if [ -n "$t" ]; then
                     if [ $quiet -eq 0 ]; then
                         printf -v display_time "%.3f" "$t"
+                        if [ -n "$ts_prefix" ]; then
+                            printf '\033[33m%s\033[0m' "$ts_prefix"
+                        fi
                         _cprint -c 32 "来自 $resolved_ip 的回复: 字节=$data_bytes 时间=${display_time}ms TTL=$ttl"
                     fi
                     sum=$(echo "$sum + $t" | bc)
@@ -359,6 +555,9 @@ fi
                     count=$((count + 1))
                 else
                     if [ $quiet -eq 0 ]; then
+                        if [ -n "$ts_prefix" ]; then
+                            printf '\033[33m%s\033[0m' "$ts_prefix"
+                        fi
                         _cprint -c 32 "$line"
                     fi
                 fi
