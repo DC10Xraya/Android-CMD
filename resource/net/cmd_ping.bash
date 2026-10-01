@@ -1,5 +1,5 @@
 #resource/cmd_ping.bash
-#Android CMD PING remake dev 2026_10_01
+#Android CMD PING remake dev 2026_10_01_bug_a
 cmd_ping() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
     cecho -b "用法: PING [-n] [-nf/-inf] [-f] [-w] [-W] [-i] [-s] [-I] [-t] [-4|-6] [-b] [-B] [-S] [-r] [-L] [-D] [-Dp] [-v] [-q] [-V] <域名/IP>"
@@ -21,7 +21,7 @@ cmd_ping() {
     cecho "-r               绕过路由表直接发送到本地接口"
     cecho "-L               抑制组播回环"
     cecho "-D               显示 Unix 时间戳"
-    cecho "-Dp 格式         显示人性化时间戳, 默认 HH:mm:ss"
+    cecho "-Dp [格式]       显示人性化时间戳(格式可省略, 默认 HH:mm:ss)"
     cecho "占位符: YYYY=年  YY=两位年  MM=月  DD=日"
     cecho "       HH=24时  hh=12时  mm=分  ss=秒"
     cecho "       AA=星期全称  aa=星期缩写"
@@ -48,7 +48,6 @@ fi
     local show_timestamp=0 timestamp_pretty=0 timestamp_format="HH:mm:ss"
     local show_version=0
 
-    # 临时存储解析过程中是否遇到 -s 或 -i(用于冲突检测)
     local opt_s_provided=0 opt_i_provided=0
 
     while [ $# -gt 0 ]; do
@@ -60,16 +59,16 @@ fi
                     err "选项 -n 需要指定有效次数(大于0的整数)"; valid_args=0; break
                 fi
                 ;;
-            -nf|-inf)   # 支持两种写法
+            -nf|-inf)
                 mode="inf"; has_nf=1; shift
                 ;;
             -f)
                 if ! confirm "你想使用洪水模式吗?如果你是非root设备,我们将会模拟\n无论是真正的洪水模式还是模拟,这都会消耗一些流量,并且可能导致资源拥堵\n参考流量消耗:Really:6.5MB/s Sim:360KB/s"; then
-                return
-             fi
-             flood_mode=1
-             shift
-             ;;
+                    return
+                fi
+                flood_mode=1
+                shift
+                ;;
             -s)
                 opt_s_provided=1
                 if [ $# -ge 2 ] && echo "$2" | grep -qE '^[0-9]+$' && [ "$2" -ge 1 ] && [ "$2" -le 65507 ]; then
@@ -94,17 +93,14 @@ fi
                 ;;
             -i)
                 opt_i_provided=1
-                if [ $# -ge 2 ]; then
-                    interval=$(echo "$2" | sed 's/[^0-9.]//g')
-                    if [ -z "$interval" ] || [ "$interval" = "." ]; then
-                        err "选项 -i 需要指定有效的间隔时间(大于等于0.2的数字)"; valid_args=0; break
-                    fi
+                if [ $# -ge 2 ] && echo "$2" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+                    interval="$2"
                     if [ "$(echo "$interval < 0.2" | bc 2>/dev/null)" = "1" ]; then
                         err "选项 -i 间隔不能小于0.2秒"; valid_args=0; break
                     fi
                     shift 2
                 else
-                    err "选项 -i 需要指定间隔时间"; valid_args=0; break
+                    err "选项 -i 需要指定有效的间隔时间(大于等于0.2的数字)"; valid_args=0; break
                 fi
                 ;;
             -I)
@@ -149,7 +145,6 @@ fi
             -Dp)
                 show_timestamp=1
                 timestamp_pretty=1
-                # 自定义占位符 或 系统 date 格式(%开头) 均可作为格式串
                 if [ $# -ge 2 ] && echo "$2" | grep -qE 'YYYY|YY|MM|DD|HH|hh|mm|ss|AA|aa|%'; then
                     timestamp_format="$2"; shift 2
                 else
@@ -199,24 +194,21 @@ fi
         fi
     fi
 
-    # -nf 和 -n 互斥
     if [ $has_nf -eq 1 ] && [ $has_n -eq 1 ]; then
         err "选项 -nf/-inf (无限制发送) 和 -n (指定次数) 不能同时使用"; return 1
     fi
 
-    # -4 和 -6 互斥
     if [ $ipv4 -eq 1 ] && [ $ipv6 -eq 1 ]; then
         err "选项 -4 (强制IPv4) 和 -6 (强制IPv6) 不能同时使用"; return 1
     fi
 
-    # -Dp 和 -v 互斥( -v 直接透传原始输出, 人性化时间戳包装不会生效 )
     if [ $timestamp_pretty -eq 1 ] && [ $verbose -eq 1 ]; then
         err "选项 -Dp (人性化时间戳) 和 -v (原始输出) 不能同时使用"; return 1
     fi
 
     # ---------- -V 版本信息 ----------
     if [ $show_version -eq 1 ]; then
-        cecho -b "PING 函数版本: Android CMD PING remake dev 2026_10_01"
+        cecho -b "PING 函数版本: Android CMD PING remake dev 2026_10_01_bug_a"
         cecho "底层 ping 版本信息:"
         local vout
         vout=$(ping -V 2>&1)
@@ -244,7 +236,6 @@ fi
         count=4
     fi
 
-    # ---------- 工具检测 ----------
     command -v ping >/dev/null 2>&1 || { err "未找到 ping 命令"; return 1; }
 
     # ---------- 辅助函数 ----------
@@ -276,34 +267,29 @@ fi
         echo ""
     }
 
-    # 检测是否支持真正的 -f
-    can_use_real_flood() {
-        local output
-        output=$(ping -f -c 1 -W 1 127.0.0.1 2>&1)
-        local ret=$?
-        if [ $ret -eq 0 ]; then
-            return 0
-        else
-            if echo "$output" | grep -qiE "cannot flood|operation not permitted|not allowed"; then
-                return 1
-            else
-                return 1
-            fi
+    can_use_ping_opt() {
+        local opt="$1"
+        local out
+        out=$(ping "$opt" -c 1 -W 1 127.0.0.1 2>&1)
+        if echo "$out" | grep -qiE "invalid option|unknown option|unrecognized option"; then
+            return 1
         fi
+        return 0
     }
 
-    # 检测 ping 是否支持 -6 选项
+    can_use_real_flood() {
+        ping -f -c 1 -W 1 127.0.0.1 >/dev/null 2>&1
+    }
+
     can_use_ping_dash6() {
         local output
         output=$(ping -6 -c 1 -W 1 ::1 2>&1)
-        # 只要报的是"选项无效"类的错误, 就说明不支持 -6
         if echo "$output" | grep -qiE "invalid option|unknown option|unrecognized option|usage:"; then
             return 1
         fi
         return 0
     }
 
-    # 检测 ping 是否支持 -D 选项(用于 -v 模式下透传系统时间戳)
     can_use_ping_dashD() {
         local output
         output=$(ping -D -c 1 -W 1 127.0.0.1 2>&1)
@@ -311,6 +297,29 @@ fi
             return 1
         fi
         return 0
+    }
+
+    can_use_ping_dashw() {
+        local out
+        out=$(ping -w 1 -c 1 127.0.0.1 2>&1)
+        if echo "$out" | grep -qiE "invalid option|unknown option|unrecognized option"; then
+            return 1
+        fi
+        return 0
+    }
+
+    # 应用 -w：整数优先底层, 小数用 timeout
+    apply_total_timeout() {
+        [ "$(echo "$total_timeout > 0" | bc 2>/dev/null)" = "1" ] || return 0
+        if echo "$total_timeout" | grep -qE '^[0-9]+$' && can_use_ping_dashw; then
+            ping_cmd+=(-w "$total_timeout")
+        elif command -v timeout >/dev/null 2>&1; then
+            ping_cmd=(timeout "$total_timeout" "${ping_cmd[@]}")
+        elif can_use_ping_dashw; then
+            local tt_int=$(printf "%.0f" "$total_timeout")
+            [ "$tt_int" -lt 1 ] && tt_int=1
+            ping_cmd+=(-w "$tt_int")
+        fi
     }
 
     get_time() {
@@ -325,7 +334,6 @@ fi
         fi
     }
 
-    # 人性化时间戳: 自定义占位符 -> 系统 date 格式, 系统格式原样透传
     format_timestamp() {
         local fmt="$1"
         fmt="${fmt//YYYY/%Y}"
@@ -341,8 +349,25 @@ fi
         date +"$fmt" 2>/dev/null
     }
 
-    # ---------- IPv6 回退方案检测 ----------
-    # 用户输入 -6 时: 先尝试 ping -6, 失败则回退到 ping6
+    # "0.474" -> 474 (微秒); "1.5" -> 1500; "10" -> 10000
+    parse_ms_to_us() {
+        local t="$1"
+        local i="${t%%.*}"
+        local d="${t#*.}"
+        [ "$d" = "$t" ] && d="0"
+        d="${d}000"
+        d="${d:0:3}"
+        [ -z "$i" ] && i=0
+        echo $(( i * 1000 + 10#$d ))
+    }
+
+    us_to_ms_str() {
+        local us="$1"
+        [ -z "$us" ] && { echo "N/A"; return; }
+        printf "%d.%03dms" $(( us / 1000 )) $(( us % 1000 ))
+    }
+
+    # ---------- IPv6 回退检测 ----------
     local use_ping6=0
     if [ $ipv6 -eq 1 ]; then
         if ! can_use_ping_dash6; then
@@ -355,11 +380,10 @@ fi
         fi
     fi
 
-    # ---------- 构建显示目标和解析后的 IP ----------
+    # ---------- 显示目标 / 解析 IP ----------
     local display_target="$target"
     local resolved_ip=""
     if [ $ipv6 -eq 1 ]; then
-        # 强制 IPv6 时不做 IPv4 解析, 直接展示用户输入
         display_target="$target"
         resolved_ip="$target"
     elif is_ip "$target"; then
@@ -376,79 +400,76 @@ fi
         fi
     fi
 
-    # ---------- 构建 ping 命令 ----------
-    local ping_cmd="ping"
-    local data_bytes=56   # 默认显示, 会被后续覆盖
-    local icmp_header=28  # IPv4 头部 28 字节, IPv6 为 40
+    # ---------- 构建 ping 命令(数组, 不用 eval) ----------
+    local -a ping_cmd=(ping)
+    local data_bytes=56
+    local icmp_header=28
 
-    # IPv6 回退: 使用 ping6 命令时不再传 -6
     if [ $use_ping6 -eq 1 ]; then
-        ping_cmd="ping6"
-        icmp_header=40
+        ping_cmd=(ping6)
+        icmp_header=48
     else
-        [ $ipv4 -eq 1 ] && ping_cmd="$ping_cmd -4"
-        [ $ipv6 -eq 1 ] && ping_cmd="$ping_cmd -6" && icmp_header=40
+        if [ $ipv4 -eq 1 ] && can_use_ping_opt "-4"; then
+            ping_cmd+=(-4)
+        fi
+        if [ $ipv6 -eq 1 ]; then
+            ping_cmd+=(-6)
+            icmp_header=48
+        fi
     fi
 
-    # 全局附加选项(两种模式通用)
-    [ $bcast_ok -eq 1 ] && ping_cmd="$ping_cmd -b"
-    [ $no_src_change -eq 1 ] && ping_cmd="$ping_cmd -B"
-    [ $bypass_route -eq 1 ] && ping_cmd="$ping_cmd -r"
-    [ $no_mcast_loop -eq 1 ] && ping_cmd="$ping_cmd -L"
-    [ -n "$sndbuf" ] && ping_cmd="$ping_cmd -S $sndbuf"
+    [ $bcast_ok -eq 1 ] && ping_cmd+=(-b)
+    [ $no_src_change -eq 1 ] && ping_cmd+=(-B)
+    [ $bypass_route -eq 1 ] && ping_cmd+=(-r)
+    [ $no_mcast_loop -eq 1 ] && ping_cmd+=(-L)
+    [ -n "$sndbuf" ] && ping_cmd+=(-S "$sndbuf")
 
     if [ $flood_mode -eq 1 ]; then
         if can_use_real_flood; then
-            ping_cmd="$ping_cmd -f"
-            [ -n "$source_iface" ] && ping_cmd="$ping_cmd -I $source_iface"
-            [ -n "$ttl_val" ] && ping_cmd="$ping_cmd -t $ttl_val"
-            ping_cmd="$ping_cmd -W $per_packet_timeout"
-            if [ "$(echo "$total_timeout > 0" | bc 2>/dev/null)" = "1" ] && command -v timeout >/dev/null 2>&1; then
-                ping_cmd="timeout $total_timeout $ping_cmd"
-            fi
-            ping_cmd="$ping_cmd $target"
+            ping_cmd+=(-f)
+            [ -n "$source_iface" ] && ping_cmd+=(-I "$source_iface")
+            [ -n "$ttl_val" ] && ping_cmd+=(-t "$ttl_val")
+            ping_cmd+=(-W "$per_packet_timeout")
+            apply_total_timeout
+            ping_cmd+=("$target")
             data_bytes=56
         else
-            # 模拟洪水：强制参数
             local fake_count=9999999
             local fake_interval=0.2
-            local fake_packet_size=65507   # 强制固定
+            local fake_packet_size=65507
             data_bytes=$fake_packet_size
-            ping_cmd="$ping_cmd -c $fake_count -s $fake_packet_size -i $fake_interval -W $per_packet_timeout"
-            [ -n "$source_iface" ] && ping_cmd="$ping_cmd -I $source_iface"
-            [ -n "$ttl_val" ] && ping_cmd="$ping_cmd -t $ttl_val"
-            if [ "$(echo "$total_timeout > 0" | bc 2>/dev/null)" = "1" ] && command -v timeout >/dev/null 2>&1; then
-                ping_cmd="timeout $total_timeout $ping_cmd"
-            fi
-            ping_cmd="$ping_cmd $target"
+            ping_cmd+=(-c "$fake_count" -s "$fake_packet_size" -i "$fake_interval" -W "$per_packet_timeout")
+            [ -n "$source_iface" ] && ping_cmd+=(-I "$source_iface")
+            [ -n "$ttl_val" ] && ping_cmd+=(-t "$ttl_val")
+            apply_total_timeout
+            ping_cmd+=("$target")
         fi
     else
-        # 非洪水模式
-        [ "$mode" = "count" ] && ping_cmd="$ping_cmd -c $count"
-        ping_cmd="$ping_cmd -i $interval -W $per_packet_timeout"
-        [ -n "$packet_size" ] && ping_cmd="$ping_cmd -s $packet_size" && data_bytes=$packet_size
-        [ -n "$source_iface" ] && ping_cmd="$ping_cmd -I $source_iface"
-        [ -n "$ttl_val" ] && ping_cmd="$ping_cmd -t $ttl_val"
-        if [ "$(echo "$total_timeout > 0" | bc 2>/dev/null)" = "1" ] && command -v timeout >/dev/null 2>&1; then
-            ping_cmd="timeout $total_timeout $ping_cmd"
+        [ "$mode" = "count" ] && ping_cmd+=(-c "$count")
+        ping_cmd+=(-i "$interval" -W "$per_packet_timeout")
+        if [ -n "$packet_size" ]; then
+            ping_cmd+=(-s "$packet_size")
+            data_bytes=$packet_size
         fi
-        ping_cmd="$ping_cmd $target"
-        # data_bytes 已在上面设置
+        [ -n "$source_iface" ] && ping_cmd+=(-I "$source_iface")
+        [ -n "$ttl_val" ] && ping_cmd+=(-t "$ttl_val")
+        apply_total_timeout
+        ping_cmd+=("$target")
     fi
 
-    # ---------- 处理 -v 模式 ----------
+    # ---------- -v 模式 ----------
     if [ $verbose -eq 1 ]; then
-        # -v 与 -D 同用: 直接把系统 -D 透传给底层 ping
         if [ $show_timestamp -eq 1 ] && [ $timestamp_pretty -eq 0 ]; then
             if ! can_use_ping_dashD; then
                 err "当前 ping 不支持 -D 选项, 无法在 -v 模式下使用系统时间戳"
                 return 1
             fi
-            ping_cmd="${ping_cmd% $target} -D $target"
+            local last=$((${#ping_cmd[@]} - 1))
+            ping_cmd=("${ping_cmd[@]:0:$last}" -D "${ping_cmd[@]:$last}")
         fi
         local old_trap=$(trap -p INT)
         trap 'echo ""; return 130' INT
-        eval "$ping_cmd"
+        "${ping_cmd[@]}"
         local ret=$?
         if [ -n "$old_trap" ]; then
             eval "$old_trap"
@@ -462,8 +483,6 @@ fi
     local tmp_stat="${TMP_DIR:-/storage/emulated/0/tmp}/ping_stat_$$_$RANDOM"
     mkdir -p "$(dirname "$tmp_stat")" 2>/dev/null
     > "$tmp_stat"
-
-    local start_time=$(get_time)
 
     if [ $quiet -eq 0 ]; then
         if [ $flood_mode -eq 1 ] && ! can_use_real_flood; then
@@ -479,21 +498,24 @@ fi
     local old_trap=$(trap -p INT)
     trap 'interrupted=1' INT
 
-    eval "$ping_cmd" 2>&1 | {
+    local start_time=$(get_time)
+    "${ping_cmd[@]}" 2>&1 | {
         trap 'write_stats_and_exit' INT TERM
 
         local sent=0 recv=0
-        local sum=0 min="" max="" count=0
+        local sum_us=0 min_us="" max_us=""
+        local rtt_count=0
         local error_flag=0
+        local RE_TIME='time[=<]([0-9.]+)'
 
         write_stats_and_exit() {
             if [ $error_flag -eq 0 ]; then
                 echo "SENT=$sent" > "$tmp_stat"
                 echo "RECV=$recv" >> "$tmp_stat"
-                echo "SUM=$sum" >> "$tmp_stat"
-                echo "MIN=$min" >> "$tmp_stat"
-                echo "MAX=$max" >> "$tmp_stat"
-                echo "COUNT=$count" >> "$tmp_stat"
+                echo "SUM_US=$sum_us" >> "$tmp_stat"
+                echo "MIN_US=$min_us" >> "$tmp_stat"
+                echo "MAX_US=$max_us" >> "$tmp_stat"
+                echo "RTT_COUNT=$rtt_count" >> "$tmp_stat"
             else
                 echo "ERROR" > "$tmp_stat"
             fi
@@ -501,33 +523,40 @@ fi
         }
 
         while IFS= read -r line; do
-            if echo "$line" | grep -qiE "unknown host|name or service not known"; then
+            if [[ "$line" == *"unknown host"* || "$line" == *"name or service not known"* ]]; then
                 err "未知的主机 \"$target\""
                 error_flag=1
                 break
-            elif echo "$line" | grep -qiE "network is unreachable|no route to host"; then
+            elif [[ "$line" == *"network is unreachable"* || "$line" == *"no route to host"* ]]; then
                 err "目标 \"$target\" 不可达"
                 error_flag=1
                 break
-            elif echo "$line" | grep -qiE "invalid option|unknown option|unrecognized option"; then
+            elif [[ "$line" == *"no such device"* || "$line" == *"cannot bind"* || "$line" == *"bind failed"* || "$line" == *"SO_BINDTODEVICE"* || "$line" == *"bind: "* ]]; then
+                err "无法绑定接口/源地址: $line"
+                error_flag=1
+                break
+            elif [[ "$line" == *"invalid option"* || "$line" == *"unknown option"* || "$line" == *"unrecognized option"* ]]; then
                 err "底层 ping 拒绝执行: $line"
                 error_flag=1
                 break
             fi
 
-            if echo "$line" | grep -q "packets transmitted"; then
-                sent=$(echo "$line" | grep -oE '[0-9]+ packets transmitted' | grep -oE '[0-9]+')
+            if [[ "$line" =~ ([0-9]+)\ packets\ transmitted ]]; then
+                sent="${BASH_REMATCH[1]}"
             fi
 
-            if echo "$line" | grep -q "bytes from"; then
-                recv=$((recv + 1))
-                t=$(echo "$line" | grep -oE 'time[=<][0-9.]+' | grep -oE '[0-9.]+' | head -1)
-                ttl=$(echo "$line" | grep -oE 'ttl=[0-9]+' | cut -d= -f2)
-                # IPv6 用 hlim 替代 ttl
-                [ -z "$ttl" ] && ttl=$(echo "$line" | grep -oE 'hlim=[0-9]+' | cut -d= -f2)
-                [ -z "$ttl" ] && ttl="?"
+            if [[ "$line" == *"bytes from"* ]]; then
+                t=""
+                if [[ "$line" =~ $RE_TIME ]]; then
+                    t="${BASH_REMATCH[1]}"
+                fi
+                ttl="?"
+                if [[ "$line" =~ ttl=([0-9]+) ]]; then
+                    ttl="${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ hlim=([0-9]+) ]]; then
+                    ttl="${BASH_REMATCH[1]}"
+                fi
 
-                # -D/-Dp: 自己加时间戳包装, 黄色渲染
                 local ts_prefix=""
                 if [ $show_timestamp -eq 1 ]; then
                     if [ $timestamp_pretty -eq 1 ]; then
@@ -537,7 +566,15 @@ fi
                     fi
                 fi
 
+                recv=$((recv + 1))
+
                 if [ -n "$t" ]; then
+                    local t_us=$(parse_ms_to_us "$t")
+                    sum_us=$((sum_us + t_us))
+                    rtt_count=$((rtt_count + 1))
+                    if [ -z "$min_us" ] || [ $t_us -lt $min_us ]; then min_us=$t_us; fi
+                    if [ -z "$max_us" ] || [ $t_us -gt $max_us ]; then max_us=$t_us; fi
+
                     if [ $quiet -eq 0 ]; then
                         printf -v display_time "%.3f" "$t"
                         if [ -n "$ts_prefix" ]; then
@@ -545,20 +582,12 @@ fi
                         fi
                         _cprint -c 32 "来自 $resolved_ip 的回复: 字节=$data_bytes 时间=${display_time}ms TTL=$ttl"
                     fi
-                    sum=$(echo "$sum + $t" | bc)
-                    if [ -z "$min" ] || [ "$(echo "$t < $min" | bc)" = "1" ]; then
-                        min="$t"
-                    fi
-                    if [ -z "$max" ] || [ "$(echo "$t > $max" | bc)" = "1" ]; then
-                        max="$t"
-                    fi
-                    count=$((count + 1))
                 else
                     if [ $quiet -eq 0 ]; then
                         if [ -n "$ts_prefix" ]; then
                             printf '\033[33m%s\033[0m' "$ts_prefix"
                         fi
-                        _cprint -c 32 "$line"
+                        _cprint -c 32 "来自 $resolved_ip 的回复: 字节=$data_bytes TTL=$ttl (无时间信息)"
                     fi
                 fi
             fi
@@ -568,6 +597,8 @@ fi
     }
 
     wait
+
+    local end_time=$(get_time)
 
     if [ -n "$old_trap" ]; then
         eval "$old_trap"
@@ -580,17 +611,17 @@ fi
         cecho "Ping 已终止"
     fi
 
-    local sent=0 recv=0 sum=0 min="" max="" count=0
+    local sent=0 recv=0 sum_us=0 min_us="" max_us="" rtt_count=0
     local error_flag=0
     if [ -f "$tmp_stat" ]; then
         while IFS= read -r line; do
             case "$line" in
                 SENT=*) sent="${line#SENT=}" ;;
                 RECV=*) recv="${line#RECV=}" ;;
-                SUM=*) sum="${line#SUM=}" ;;
-                MIN=*) min="${line#MIN=}" ;;
-                MAX=*) max="${line#MAX=}" ;;
-                COUNT=*) count="${line#COUNT=}" ;;
+                SUM_US=*) sum_us="${line#SUM_US=}" ;;
+                MIN_US=*) min_us="${line#MIN_US=}" ;;
+                MAX_US=*) max_us="${line#MAX_US=}" ;;
+                RTT_COUNT=*) rtt_count="${line#RTT_COUNT=}" ;;
                 ERROR) error_flag=1 ;;
             esac
         done < "$tmp_stat"
@@ -601,7 +632,7 @@ fi
         return 1
     fi
 
-    if [ $sent -gt 0 ] || [ $recv -gt 0 ] || [ $count -gt 0 ]; then
+    if [ $sent -gt 0 ] || [ $recv -gt 0 ]; then
         if [ $sent -eq 0 ]; then sent=$recv; fi
         local loss=$((sent - recv))
         local loss_rate=0
@@ -610,36 +641,26 @@ fi
         cecho "$target 的 Ping 统计信息:"
         cecho "    数据包: 已发送 = $sent, 已接收 = $recv, 丢失 = $loss ($loss_rate% 丢失)"
 
-        if [ $count -gt 0 ]; then
-            # 安全计算平均值
-            if [[ -n "$sum" && "$sum" =~ ^[0-9.]+$ ]] && [ "$count" -gt 0 ]; then
-                avg=$(echo "scale=4; $sum / $count" | bc 2>/dev/null)
-                if [ -z "$avg" ] || [ "$avg" = "0" ]; then
-                    avg_disp="N/A"
-                else
-                    avg_disp=$(printf "%.3fms" "$avg")
-                fi
-            else
-                avg_disp="N/A"
-            fi
-            min_disp=$(printf "%.3fms" "$min")
-            max_disp=$(printf "%.3fms" "$max")
-            cecho "数据包的往返时间统计(有效统计 $count 个包):"
+        if [ $rtt_count -gt 0 ]; then
+            local avg_us=$(( sum_us / rtt_count ))
+            local min_disp=$(us_to_ms_str "$min_us")
+            local max_disp=$(us_to_ms_str "$max_us")
+            local avg_disp=$(us_to_ms_str "$avg_us")
+            cecho "数据包的往返时间统计(有效统计 $rtt_count 个包):"
             cecho "    最短 = ${min_disp}, 最长 = ${max_disp}, 平均 = ${avg_disp}"
         elif [ $recv -gt 0 ]; then
-            err "   所有回复均无时间信息, 无法统计往返时间"
+            err "   收到 $recv 个回复, 但底层未提供 RTT 信息"
         else
             err "   没有收到任何有效回复"
         fi
 
-        local end_time=$(get_time)
         local duration=$(echo "$end_time - $start_time" | bc 2>/dev/null)
         if [ -n "$duration" ] && [ "$(echo "$duration > 0" | bc 2>/dev/null)" = "1" ]; then
             printf -v duration_fmt "%.3f" "$duration"
             cecho "总耗时: ${duration_fmt} 秒"
         fi
     else
-        err "还没有未发送任何包"
+        err "还没有发送任何包"
     fi
 
     return 0
