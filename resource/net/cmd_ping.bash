@@ -1,5 +1,6 @@
 #resource/cmd_ping.bash
 #Android CMD PING remake dev 2026_10_01_bug_a
+#qwq
 cmd_ping() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
     cecho -b "用法: PING [-n] [-nf/-inf] [-f] [-w] [-W] [-i] [-s] [-I] [-t] [-4|-6] [-b] [-B] [-S] [-r] [-L] [-D] [-Dp] [-v] [-q] [-V] <域名/IP>"
