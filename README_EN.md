@@ -75,9 +75,11 @@ cd "the directory you extracted to"
 bash CMD_main_dev.bash
 ```
 
-After startup, enter HELP or /? to view the list of built-in commands;
-if you want to run system commands, you can use C(eval) or the BASH command to run system commands;
-if you want to continue running other scripts internally, you can use SH.
+After startup, enter HELP or /? to view the list of built-in commands
+
+if you want to run system commands, you can use C(eval) or the BASH command to run system commands
+
+if you want to continue running other scripts internally, you can use SH
 
 ### Runtime Dependencies
 
