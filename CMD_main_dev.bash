@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.22.1 (dev0.307)"
+CMD_VER="0.23 (dev0.315)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -121,12 +121,14 @@ init_tools
 #------------------------------------------
 # ------------------初始化------------------
 CMD_delimiter="----------------------------------------------------"
-# ---------- 主逻辑part:自定义命令行解析器 BETA 3 ----------
+# ---------- 主逻辑part:自定义命令行解析器 BETA 4 ----------
 PARSED_ARGS=()   # 全局数组, 存储解析后的参数
-# 尝试展开自定义变量: $pwd / $sdir / $self / $0
+# 匹配变量: 支持 $VAR、${VAR}(含 ${VAR:-x} 等)、位置参数 $1/$2、以及特殊别名 $pwd/$sdir/$self/$0
+# 返回值: 匹配到的字面量(未展开), 空则视为普通字符
 _match_custom_var() {
     local rest="$1"
     local after
+    # ---- 特殊别名(优先识别, 避免与同名普通变量冲突) ----
     if [[ "$rest" == '$pwd'* ]]; then
         after="${rest:4:1}"
         [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$pwd'; return; }
@@ -140,11 +142,51 @@ _match_custom_var() {
         [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$self'; return; }
     fi
     if [[ "$rest" == '$0'* ]]; then
-        printf '%s' '$0'; return
+        after="${rest:2:1}"
+        [[ -z "$after" || ! "$after" =~ [a-zA-Z0-9_] ]] && { printf '%s' '$0'; return; }
+    fi
+    # ---- 通用 ${VAR} 形式(含 ${VAR:-default} / ${VAR#pat} / ${VAR%pat} 等) ----
+    if [[ "$rest" =~ ^\$\{[^}]*\} ]]; then
+        printf '%s' "${BASH_REMATCH[0]}"
+        return
+    fi
+    # ---- 通用 $VAR 形式 ----
+    if [[ "$rest" =~ ^\$[a-zA-Z_][a-zA-Z0-9_]* ]]; then
+        printf '%s' "${BASH_REMATCH[0]}"
+        return
+    fi
+    # ---- 位置参数 $1 $2 ... (不含 $0, 上面已单独处理) ----
+    if [[ "$rest" =~ ^\$[0-9]+ ]]; then
+        printf '%s' "${BASH_REMATCH[0]}"
+        return
     fi
 }
 
+# 根据 _match_custom_var 的匹配结果, 返回变量展开后的值
+_expand_var() {
+    local _lit="$1"
+    case "$_lit" in
+        '$pwd')        printf '%s' "$PWD" ;;
+        '$sdir')       printf '%s' "$SCRIPT_DIR" ;;
+        '$self'|'$0')  printf '%s' "$0" ;;
+        *)
+            # 通用展开: 交由 bash 自行解析 $VAR / ${VAR} / ${VAR:-x} 等
+            local _val
+            if _val=$(eval "printf '%s' \"$_lit\"" 2>/dev/null); then
+                printf '%s' "$_val"
+            else
+                # 无法展开时保持原样
+                printf '%s' "$_lit"
+            fi
+            ;;
+    esac
+}
+
 # 解析一行输入, 结果存入 PARSED_ARGS
+# 规则:
+#   单引号内: 原样输出, 不识别变量/转义
+#   双引号内: 识别变量; \" \$ \` \\ 为转义; 其余反斜杠保留
+#   无引号:   识别变量与转义; 空白分隔; # 前无内容时作为注释
 parse_line() {
     local input="$1"
     local result=()
@@ -155,31 +197,30 @@ parse_line() {
     local i
     for (( i=0; i<${#input}; i++ )); do
         char="${input:i:1}"
+        # ---- 转义字符处理(仅无引号或双引号内会置 escape=1) ----
         if [ $escape -eq 1 ]; then
             current="$current$char"
             escape=0
             continue
         fi
+
         if [ $in_single -eq 0 ] && [ $in_double -eq 0 ]; then
+            # ========== 无引号状态 ==========
             case "$char" in
                 "'")      in_single=1; continue ;;
                 '"')      in_double=1; continue ;;
                 "\\")     escape=1;    continue ;;
                 "#")
-                if [ -z "$current" ]; then
-                break
-                fi
-                current="$current$char"
-                ;;
+                    if [ -z "$current" ]; then
+                        break
+                    fi
+                    current="$current$char"
+                    ;;
                 '$')
                     local _lit
                     _lit=$(_match_custom_var "${input:i}")
                     if [ -n "$_lit" ]; then
-                        case "$_lit" in
-                            '$pwd')        current="$current$PWD" ;;
-                            '$sdir')       current="$current$SCRIPT_DIR" ;;
-                            '$self'|'$0')  current="$current$0" ;;
-                        esac
+                        current="$current$(_expand_var "$_lit")"
                         (( i += ${#_lit} - 1 ))
                         continue
                     fi
@@ -195,12 +236,14 @@ parse_line() {
                 *) current="$current$char" ;;
             esac
         elif [ $in_single -eq 1 ]; then
+            # ========== 单引号内: 原样输出 ==========
             if [ "$char" = "'" ]; then
                 in_single=0
             else
                 current="$current$char"
             fi
         elif [ $in_double -eq 1 ]; then
+            # ========== 双引号内 ==========
             if [ "$char" = '"' ]; then
                 in_double=0
             elif [ "$char" = '\' ]; then
@@ -216,11 +259,7 @@ parse_line() {
                 local _lit
                 _lit=$(_match_custom_var "${input:i}")
                 if [ -n "$_lit" ]; then
-                    case "$_lit" in
-                        '$pwd')        current="$current$PWD" ;;
-                        '$sdir')       current="$current$SCRIPT_DIR" ;;
-                        '$self'|'$0')  current="$current$0" ;;
-                    esac
+                    current="$current$(_expand_var "$_lit")"
                     (( i += ${#_lit} - 1 ))
                 else
                     current="$current$char"
@@ -790,58 +829,6 @@ _kill_process_tree_force() {
     kill -KILL "$pid" 2>/dev/null
 }
 
-# 文件操作函数
-# 用法: file_op <copy|move> <源1> [源2 ...] <目标>
-file_op() {
-    local op="$1"
-    shift
-    if [ $# -lt 2 ]; then
-        err "缺少参数"
-        return 1
-    fi
-
-    local dest="${!#}"
-    local sources=("${@:1:$#-1}")
-
-    local dest_is_dir=0
-    if [ -d "$dest" ]; then
-        dest_is_dir=1
-    fi
-
-    if [ ${#sources[@]} -gt 1 ] && [ $dest_is_dir -eq 0 ] && [ -e "$dest" ]; then
-        err "多个源文件时目标必须是目录"
-        return 1
-    fi
-
-    for src in "${sources[@]}"; do
-        if [ ! -e "$src" ]; then
-            err "源文件/目录不存在: $src"
-            return 1
-        fi
-
-        local target="$dest"
-        if [ $dest_is_dir -eq 1 ]; then
-            local src_basename=$(basename "$src")
-            target="$dest/$src_basename"
-        fi
-
-        if [ -e "$target" ]; then
-            confirm "覆盖 $target 吗?" || { cecho "跳过 $src"; continue; }
-        fi
-
-        if [ "$op" = "copy" ]; then
-            if [ -d "$src" ]; then
-                $_CP -r "$src" "$target" 2>/dev/null || { err "复制目录 $src 失败"; return 1; }
-            else
-                $_CP "$src" "$target" 2>/dev/null || { err "复制文件 $src 失败"; return 1; }
-            fi
-        else  # move
-            $_MV "$src" "$target" 2>/dev/null || { err "移动 $src 失败"; return 1; }
-        fi
-    done
-    return 0
-}
-
 # ---------- EXIT ----------
 handle_signal() {
     cmd_exit15
@@ -1305,7 +1292,7 @@ $CMD_delimiter
   AWK [参数] '程序' [文件...]    执行 awk 程序(系统)
   GREP [参数] 模式 [文件...]     在文件中搜索模式(系统)
   SED [参数] '脚本' [文件...]    流编辑器(系统)
-  LN -s <源> <目标>         创建软链接(符号链接)
+  LN [-s] <源> <目标>       创建(软)链接
   TREE [参数] [路径]        显示目录树
   TYPE [文件]               查看文本文件
   CAT [参数] <1> [2...]     更高级的查看文本文件(系统)
@@ -1345,7 +1332,7 @@ $CMD_delimiter
   PWD             显示当前工作目录
   SDIR            显示脚本所在目录
   SELF            显示当前脚本路径
-//cecho -c "#C0C0C0" '  #输入的命令将展开\$pwd/\$sdir/\$self/\$0'
+
 //cecho -b "网络"
   NETSTAT           网络连接统计
   HOSTNAME          显示主机名
@@ -1386,8 +1373,8 @@ $CMD_delimiter
   SLEEP <秒数>                  睡眠指定时间
   WATCH <秒数> <命令> [参数]    每隔指定时间清除屏幕并运行命令
   REPEAT <次数> <命令> [参数]   重复执行指定次数命令
-  CMDTIME <命令> [参数]         测量命令执行耗时
-//cecho -b "控制台"
+  TIME <命令> [参数]            测量命令执行耗时
+//cecho -b "ACMD"
   CLS/CLEAR                     清除屏幕(-n无标题/-r/-y有)
   CLSD/CLEARD                   设置清除屏幕默认行为
   COLOR [-def]/[BF]             设置控制台颜色
@@ -1719,6 +1706,294 @@ EOF
     _cprint "${call_args[@]}"
 }
 
+
+# ------------- 文件操作函数 -------------
+# 负责 copy / move / del / mkdir / rmdir / touch / link
+#  用法: file_op <操作> [系统参数] <参数...>
+# 规则:
+# -系统参数原样透传给底层命令
+# -未给关键参数时, 自动补人性化选项(见各分支)
+file_op() {
+    [ $# -eq 0 ] && { err "file_op: 缺少操作类型"; return 1; }
+
+    local op="${1,,}"; shift
+    case "$op" in
+        copy|cp)             op="copy"  ;;
+        move|mv|ren|rename)  op="move"  ;;
+        del|rm|erase)        op="del"   ;;
+        md|mkdir)            op="mkdir" ;;
+        rd|rmdir)            op="rmdir" ;;
+        new|touch)           op="touch" ;;
+        ln|link)             op="link"  ;;
+        *) err "file_op: 未知操作: $op"; return 1 ;;
+    esac
+
+    # ---------- 解析选项 / 位置参数 ----------
+    local end_opts=0
+    local -a opts=() pos=()
+    while [ $# -gt 0 ]; do
+        if [ $end_opts -eq 1 ]; then pos+=("$1"); shift; continue; fi
+        case "$1" in
+            --)  end_opts=1; shift ;;
+            -*)  opts+=("$1"); shift ;;
+            *)   pos+=("$1"); shift ;;
+        esac
+    done
+
+    # ---------- 工具: 检测选项串里是否含某字符 ----------
+    _file_op_has_char() {
+        local needle="$1"; shift
+        local o
+        for o in "$@"; do
+            case "$o" in
+                --*) continue ;;                # 长选项不当作短选项字符匹配
+                -*)  [[ "${o#-}" == *"$needle"* || "${o#-}" == *"${needle^^}"* ]] && return 0 ;;
+            esac
+        done
+        return 1
+    }
+
+    case "$op" in
+
+    # ================= COPY =================
+    copy)
+        [ ${#pos[@]} -lt 2 ] && { err "用法: COPY [系统参数] <源...> <目标>"; return 1; }
+        local dest="${pos[${#pos[@]}-1]}"
+        local sources=("${pos[@]:0:${#pos[@]}-1}")
+
+        # 脚本行为: 目标父目录不存在则自动创建
+        local ddir; ddir=$(dirname "$dest")
+        [ -n "$ddir" ] && [ "$ddir" != "." ] && [ ! -d "$ddir" ] && mkdir -p "$ddir" 2>/dev/null
+
+        local dest_is_dir=0; [ -d "$dest" ] && dest_is_dir=1
+        if [ ${#sources[@]} -gt 1 ] && [ $dest_is_dir -eq 0 ] && [ -e "$dest" ]; then
+            err "多个源时目标必须为目录"; return 1
+        fi
+
+        # 脚本行为: 用户没给 r/R 时, 源是目录就补 -r
+        local has_r=0
+        _file_op_has_char r "${opts[@]}" && has_r=1
+
+        local src
+        for src in "${sources[@]}"; do
+            [ -e "$src" ] || { err "源不存在: $src"; return 1; }
+
+            local target
+            if [ $dest_is_dir -eq 1 ]; then
+                target="$dest/$(basename "$src")"
+            else
+                target="$dest"
+            fi
+
+            local -a cur=("${opts[@]}")
+            if [ $has_r -eq 0 ] && [ -d "$src" ]; then
+                cur+=("-r")
+            fi
+
+            $_CP "${cur[@]}" "$src" "$target" 2>/dev/null \
+                || { err "复制失败: $src"; return 1; }
+        done
+        ;;
+
+    # ================= MOVE =================
+    move)
+        [ ${#pos[@]} -lt 2 ] && { err "用法: MOVE [系统参数] <源...> <目标>"; return 1; }
+        local dest="${pos[${#pos[@]}-1]}"
+        local sources=("${pos[@]:0:${#pos[@]}-1}")
+
+        # 脚本行为: 目标父目录不存在则自动创建
+        local ddir; ddir=$(dirname "$dest")
+        [ -n "$ddir" ] && [ "$ddir" != "." ] && [ ! -d "$ddir" ] && mkdir -p "$ddir" 2>/dev/null
+
+        local dest_is_dir=0; [ -d "$dest" ] && dest_is_dir=1
+        if [ ${#sources[@]} -gt 1 ] && [ $dest_is_dir -eq 0 ] && [ -e "$dest" ]; then
+            err "多个源时目标必须为目录"; return 1
+        fi
+
+        local src
+        for src in "${sources[@]}"; do
+            [ -e "$src" ] || { err "源不存在: $src"; return 1; }
+
+            local target
+            if [ $dest_is_dir -eq 1 ]; then
+                target="$dest/$(basename "$src")"
+            else
+                target="$dest"
+            fi
+
+            $_MV "${opts[@]}" "$src" "$target" 2>/dev/null \
+                || { err "移动失败: $src"; return 1; }
+        done
+        ;;
+
+    # ================= DEL =================
+    del)
+        [ ${#pos[@]} -eq 0 ] && { err "用法: DEL [系统参数] <目标...>"; return 1; }
+
+        # 脚本行为: 用户没给 r/R 时, 目标里含目录就补 -r
+        local has_r=0
+        _file_op_has_char r "${opts[@]}" && has_r=1
+
+        local -a cur=("${opts[@]}")
+        if [ $has_r -eq 0 ]; then
+            local f
+            for f in "${pos[@]}"; do
+                [ -d "$f" ] && { cur+=("-r"); break; }
+            done
+        fi
+
+        local f
+        for f in "${pos[@]}"; do
+            [ -e "$f" ] || { err "系统找不到指定的路径: $f"; continue; }
+            $_RM "${cur[@]}" "$f" 2>/dev/null \
+                || err "删除失败: $f"
+        done
+        ;;
+
+    # ================= MKDIR =================
+    mkdir)
+        [ ${#pos[@]} -eq 0 ] && { err "用法: MD [系统参数] <目录...>"; return 1; }
+
+        # 脚本行为: 用户没给 p 时补 -p (递归建父目录)
+        local has_p=0
+        _file_op_has_char p "${opts[@]}" && has_p=1
+
+        local -a cur=("${opts[@]}")
+        [ $has_p -eq 0 ] && cur+=("-p")
+
+        local f
+        for f in "${pos[@]}"; do
+            $_MKDIR "${cur[@]}" "$f" 2>/dev/null \
+                || err "目录创建失败: $f"
+        done
+        ;;
+
+    # ================= RMDIR =================
+    rmdir)
+        [ ${#pos[@]} -eq 0 ] && { err "用法: RD [系统参数] <目录...>"; return 1; }
+        local f
+        for f in "${pos[@]}"; do
+            [ -d "$f" ] || { err "系统找不到指定的路径: $f"; continue; }
+            $_RMDIR "${opts[@]}" "$f" 2>/dev/null \
+                || err "目录删除失败(可能非空): $f"
+        done
+        ;;
+
+    # ================= TOUCH =================
+    touch)
+        [ ${#pos[@]} -eq 0 ] && { err "用法: NEW [系统参数] <文件...>"; return 1; }
+        local f
+        for f in "${pos[@]}"; do
+            # 脚本行为: 目标父目录不存在则自动创建
+            local d; d=$(dirname "$f")
+            [ -n "$d" ] && [ "$d" != "." ] && [ ! -d "$d" ] && mkdir -p "$d" 2>/dev/null
+            touch "${opts[@]}" "$f" 2>/dev/null \
+                || err "无法处理: $f"
+        done
+        ;;
+
+    # ================= LINK =================
+    link)
+        [ ${#pos[@]} -lt 2 ] && { err "用法: LN [系统参数] <源> <目标>"; return 1; }
+        local src="${pos[0]}" target="${pos[1]}"
+        [ -e "$src" ] || { err "源不存在: $src"; return 1; }
+        ln "${opts[@]}" "$src" "$target" 2>/dev/null \
+            || { err "创建链接失败"; return 1; }
+        ;;
+    esac
+}
+
+# 七个命令薄壳 (仅帮助 + 参数校验)
+cmd_copy() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: COPY [系统参数] <源...> <目标>"
+//cecho -b "脚本行为:"
+  - 目标父目录不存在时自动创建
+  - 源是目录且未给 -r/-R 时自动补 -r
+EOF
+        return 0
+    fi
+    [ $# -lt 2 ] && { err "用法: COPY [系统参数] <源...> <目标>"; return 1; }
+    file_op copy "$@"
+}
+
+cmd_move() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: MOVE [系统参数] <源...> <目标>"
+//cecho -b "脚本行为:"
+  - 目标父目录不存在时自动创建
+EOF
+        return 0
+    fi
+    [ $# -lt 2 ] && { err "用法: MOVE [系统参数] <源...> <目标>"; return 1; }
+    file_op move "$@"
+}
+
+cmd_del() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: DEL [系统参数] <目标...>"
+//cecho -b "脚本行为:"
+  - 目标含目录且未给 -r/-R 时自动补 -r
+EOF
+        return 0
+    fi
+    [ $# -eq 0 ] && { err "用法: DEL [系统参数] <目标...>"; return 1; }
+    file_op del "$@"
+}
+
+cmd_md() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: MD [系统参数] <目录...>"
+//cecho -b "脚本行为:"
+  - 未给 -p 时自动补 -p (递归创建父目录)
+EOF
+        return 0
+    fi
+    [ $# -eq 0 ] && { err "用法: MD [系统参数] <目录...>"; return 1; }
+    file_op mkdir "$@"
+}
+
+cmd_rd() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: RD [系统参数] <目录...>"
+EOF
+        return 0
+    fi
+    [ $# -eq 0 ] && { err "用法: RD [系统参数] <目录...>"; return 1; }
+    file_op rmdir "$@"
+}
+
+cmd_touch() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: NEW [系统参数] <文件...>"
+//cecho -b "脚本行为:"
+  - 目标父目录不存在时自动创建
+EOF
+        return 0
+    fi
+    [ $# -eq 0 ] && { err "用法: NEW [系统参数] <文件...>"; return 1; }
+    file_op touch "$@"
+}
+
+cmd_ln() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << EOF
+//cecho -b "用法: LN [系统参数] <源> <目标>"
+//cecho -c 90 "创建软链接请用 LN -s <源> <目标>"
+EOF
+        return 0
+    fi
+    [ $# -lt 2 ] && { err "用法: LN [系统参数] <源> <目标>"; return 1; }
+    file_op link "$@"
+}
+
+# ------- 文件操作其他分支 -------
 cmd_du() {
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
         cecho -b "用法: DU [目录]"
@@ -1760,36 +2035,6 @@ cmd_size() {
         return 1
     fi
 }
-# ---------- LN 创建软链接 ----------
-cmd_ln() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: LN -s <源> <目标>"
-        cecho "示例: LN -s /path/to/original /path/to/link"
-        return 0
-    fi
-    if [ $# -ne 3 ] || [ "$1" != "-s" ]; then
-        err "参数错误"
-        return 1
-    fi
-    local src="$2"
-    local target="$3"
-    if [ ! -e "$src" ]; then
-        err "源文件/目录不存在: $src"
-        return 1
-    fi
-    if [ -e "$target" ] || [ -L "$target" ]; then
-        confirm "目标 '$target' 已存在, 是否覆盖?" || { echo ""; return 0; }
-        rm -f "$target" 2>/dev/null || { err "无法删除已存在的目标: $target"; return 1; }
-    fi
-    ln -s "$src" "$target" 2>/dev/null
-    local ret=$?
-    if [ $ret -eq 0 ]; then
-        cecho "软链接已创建: $target -> $src"
-    else
-        err "创建软链接失败(错误码 $ret)"
-        return $ret
-    fi
-}
 
 cmd_dir() {
     if [ $# -eq 0 ]; then
@@ -1813,102 +2058,6 @@ cmd_type() {
             err "系统找不到指定的文件: $file"
         fi
     done
-}
-
-cmd_del() {
-    [ $# -eq 0 ] && { err "命令语法不正确"; return; }
-    for f in "$@"; do
-        if [ -e "$f" ]; then
-            confirm "删除 $f 吗?" || { echo ""; continue; }
-            if [ -d "$f" ]; then
-                $_RM -r "$f" 2>/dev/null && cecho "已删除目录: $f" || err "删除目录 $f 失败"
-            else
-                $_RM "$f" 2>/dev/null && cecho "已删除文件: $f" || err "删除文件 $f 失败"
-            fi
-        else
-            err "系统找不到指定的路径: $f"
-        fi
-    done
-}
-
-cmd_md() {
-    [ $# -eq 0 ] && { err "命令语法不正确"; return; }
-    for dir in "$@"; do
-        $_MKDIR -p "$dir" 2>/dev/null || err "目录创建失败: $dir"
-    done
-}
-
-cmd_touch() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: TOUCH/NEW 文件名"
-        return 0
-    fi
-    if [ $# -ne 1 ]; then
-        err "参数错误"
-        return 1
-    fi
-    local file="$1"
-    local dir=$(dirname "$file")
-    if [ -n "$dir" ] && [ ! -d "$dir" ]; then
-        mkdir -p "$dir" 2>/dev/null || { err "无法创建目录 '$dir'"; return 1; }
-    fi
-    if [ -e "$file" ]; then
-        touch "$file" 2>/dev/null && cecho "已更新: $file" || err "无法更新: $file"
-    else
-        touch "$file" 2>/dev/null && cecho "已创建: $file" || err "创建失败: $file"
-    fi
-}
-
-cmd_rd() {
-    [ $# -eq 0 ] && { err "命令语法不正确"; return; }
-    for dir in "$@"; do
-        if [ -d "$dir" ]; then
-            confirm "删除目录 $dir 吗?" || { echo ""; continue; }
-            $_RMDIR "$dir" 2>/dev/null || err "目录删除失败(可能非空): $dir"
-        else
-            err "系统找不到指定的路径: $dir"
-        fi
-    done
-}
-
-cmd_copy() {
-    if [ $# -lt 2 ]; then
-        err "命令语法不正确用法: COPY 源... 目标"
-        cecho "示例: COPY file1.txt file2.txt ../dir/   # 复制多个文件到目录"
-        cecho "      COPY old.txt new.txt               # 复制并重命名(目标不是目录)"
-        return 1
-    fi
-
-    local dest="${!#}"
-    local dest_dir=$(dirname "$dest")
-    if [ -n "$dest_dir" ] && [ ! -d "$dest_dir" ]; then
-        mkdir -p "$dest_dir" 2>/dev/null || {
-            err "无法创建目标目录 '$dest_dir',请检查权限"
-            return 1
-        }
-    fi
-
-    file_op "copy" "$@"
-}
-
-cmd_move() {
-    if [ $# -lt 2 ]; then
-        err "用法: MOVE [源...] [目标]   (重命名时源和目标应在同一目录)"
-        cecho "示例: MOVE file1.txt ../dir/       # 移动"
-        cecho "      MOVE old.txt new.txt         # 重命名"
-        return 1
-    fi
-
-    local dest="${!#}"
-    local dest_dir=$(dirname "$dest")
-    if [ -n "$dest_dir" ] && [ ! -d "$dest_dir" ]; then
-        mkdir -p "$dest_dir" 2>/dev/null || {
-            err "无法创建目标目录 '$dest_dir',请检查权限"
-            return 1
-        }
-    fi
-
-    file_op "move" "$@"
 }
 
 cmd_free() {
@@ -3092,12 +3241,12 @@ cmd_repeat() {
     fi
 }
 
-cmd_cmdtime() {
+cmd_time() {
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -eq 0 ]; then
-        cecho -b "用法: CMDTIME <命令> [参数]"
+        cecho -b "用法: TIME <命令> [参数]"
         cecho "测量命令执行耗时"
-        cecho "示例: CMDTIME ls -l"
-        cecho "      CMDTIME sleep 2"
+        cecho "示例: TIME ls -l"
+        cecho "      TIME sleep 2"
         cecho "按Ctrl+C中断正在执行的命令"
         return 0
     fi
@@ -3942,7 +4091,7 @@ cmd_cmd() {
 
         # 路径超过 10 字符则截断显示, 执行仍用完整路径
         local shell_disp="$shell_bin"
-        [ ${#shell_disp} -gt 20 ] && shell_disp="...${shell_disp: -17}"
+        [ ${#shell_disp} -gt 30 ] && shell_disp="...${shell_disp: -27}"
 
         cecho -b "进入交互模式 [$shell_disp] (exit 或 Ctrl+D 退出)"
         cecho "$CMD_delimiter"
@@ -4752,10 +4901,11 @@ while true; do
     touch|new)         cmd_touch "${args_array[@]}" ;;
     move|ren|rename)   cmd_move "${args_array[@]}" ;;
     rd|rmdir)          cmd_rd "${args_array[@]}" ;;
+    ln|link)           cmd_ln "${args_array[@]}" ;;
     head|h)            cmd_head "${args_array[@]}" ;;
     tail|t)            cmd_tail "${args_array[@]}" ;;
     dd|diskdd)         cmd_dd "${args_array[@]}" ;;
-    now|date|time|datetime)  cmd_now "${args_array[@]}" ;;
+    now|date)          cmd_now "${args_array[@]}" ;;
     env|export)        cmd_env "${args_array[@]}" ;;
     exts|exes)         cmd_exts "${args_array[@]}" ;;
     systeminfo|sysinfo)  cmd_systeminfo ;;
@@ -4819,7 +4969,7 @@ while true; do
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
     300|china)   lazy_load "china" && cmd_china "${args_array[@]}" ;;
-    # ---------- 自定义函数 / 懒惰加载 / 系统命令 / 未知命令 ----------
+    # ---------- 自定义函数 / 懒惰加载 / 系统命令(tip) / 未知命令 ----------
     *)
     # 优先执行用户自定义函数
     if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
@@ -4829,13 +4979,14 @@ while true; do
         if lazy_load "$cmd"; then
             "cmd_$cmd" "${args_array[@]}"
         else
-            # 尝试调用系统命令
+            # 检测是否是系统命令
             if command -v "$cmd" >/dev/null 2>&1; then
-                cecho -c 90 "系统命令: $cmd"
-                "$cmd" "${args_array[@]}"
+               _full="C $cmd ${args_array[*]}"
+               [ ${#_full} -gt 30 ] && _full="${_full:0:27}..."
+               cecho -c 90 "$cmd: 系统命令(使用 \"$_full\" 来执行)"
             else
-                err "$cmd: 命令未找到"
-            fi
+               err "$cmd: 命令未找到"
+        fi
         fi
     fi
     ;;
