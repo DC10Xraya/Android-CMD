@@ -85,10 +85,12 @@ bash CMD_main_dev.bash
 基础环境为 Bash 4.0+, 必须预装:
 
 ```txt
-Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
+Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget 或 curl
 ```
 
 缺失以上依赖无法启动脚本, 其他的依赖缺失可能导致部分命令无法使用
+
+* 如果curl、wget只存在一个, 每次启动时都会提醒, 并且一些网络功能不可用; 如果都不存在, 则无法启动
 
 ### 杂七杂八
 

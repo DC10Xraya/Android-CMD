@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.23 (dev0.315)"
+CMD_VER="0.23.1 (dev0.320)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -81,19 +81,11 @@ if [ -n "$MISSING" ]; then
     exit 127
 fi
 
-# 至少需要 curl 或 wget 之一
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    err "$CMD_RUNNING_Err_title"
-    err "需要 curl 或 wget 中的至少一个, 但均未找到"
-    err "请安装 curl 或 wget, 否则一些下载功能受限"
-    exit 127
-fi
-
-
-echo -e "\033[32m---------------CMD Running---------------\033[0m"
 # ------- 工具检测 -------
 init_tools() {
     if command -v busybox >/dev/null 2>&1; then
+        # 缓存 applet 列表, 避免后面反复调用 busybox --list
+        _BUSYBOX_APPLETS="$(busybox --list 2>/dev/null)"
         _AWK="busybox awk"; _CAT="busybox cat"; _CUT="busybox cut"
         _DATE="busybox date"; _GREP="busybox grep"; _HEAD="busybox head"
         _HOSTNAME="busybox hostname"; _IFCONFIG="busybox ifconfig"
@@ -103,9 +95,14 @@ init_tools() {
         _PS="busybox ps"; _PING="busybox ping"; _UPTIME="busybox uptime"
         _WHOAMI="busybox whoami"; _FREE="busybox free"; _DF="busybox df"
         _UNAME="busybox uname"; _SED="busybox sed"; _FIND="busybox find"
-        _SORT="busybox sort"; _TAIL="busybox tail"; _STAT="busybox stat"
-        _WGET="busybox wget"; _CURL="busybox curl"
+        _SORT="busybox sort"; _TAIL="busybox tail"; _STAT="busybox stat"; _WGET="busybox wget"
+        if printf '%s\n' "$_BUSYBOX_APPLETS" | grep -qw curl; then
+            _CURL="busybox curl"
+        else
+            _CURL="curl"
+        fi
     else
+        _BUSYBOX_APPLETS=""
         _AWK="awk"; _CAT="cat"; _CUT="cut"; _DATE="date"; _GREP="grep"
         _HEAD="head"; _HOSTNAME="hostname"; _IFCONFIG="ifconfig"
         _IP="ip"; _LS="ls"; _MKDIR="mkdir"; _MV="mv"; _CP="cp"
@@ -118,6 +115,37 @@ init_tools() {
 }
 init_tools
 
+# 网络工具可用性
+# 优先级: 真实系统命令 > busybox 兜底
+HAS_CURL=0
+HAS_WGET=0
+
+command -v curl >/dev/null 2>&1 && HAS_CURL=1
+command -v wget >/dev/null 2>&1 && HAS_WGET=1
+
+if [ "$HAS_CURL" -eq 0 ] && [ -n "$_CURL" ]; then
+    $_CURL --help >/dev/null 2>&1
+    [ $? -ne 127 ] && HAS_CURL=1
+fi
+if [ "$HAS_WGET" -eq 0 ] && [ -n "$_WGET" ]; then
+    $_WGET --help >/dev/null 2>&1
+    [ $? -ne 127 ] && HAS_WGET=1
+fi
+
+if [ $((HAS_CURL + HAS_WGET)) -eq 0 ]; then
+    err "$CMD_RUNNING_Err_title"
+    err "需要 curl 或 wget 中的至少一个, 但均未找到"
+    err "请安装 curl 或 wget 中的至少一个(tip:既然这样, 那就两个都安装完吧)"
+    exit 127
+fi
+
+if [ $((HAS_CURL + HAS_WGET)) -eq 1 ]; then
+    net_tools_only_one=1
+else
+    net_tools_only_one=0
+fi
+
+echo -e "\033[32m---------------CMD Running---------------\033[0m"
 #------------------------------------------
 # ------------------初始化------------------
 CMD_delimiter="----------------------------------------------------"
@@ -750,8 +778,6 @@ get_title() {
     if [ -n "$CUSTOM_TITLE" ]; then
         cecho "$CUSTOM_TITLE"
     else
-        local osver=$(getprop ro.build.version.release 2>/dev/null || echo '?')
-        local kernel=$($_UNAME -r 2>/dev/null || echo '?')
         local title_prefix="Android CMD [版本 $CMD_VER]"
         cecho -b "$title_prefix"
     fi
@@ -777,15 +803,19 @@ get_title() {
 #------------------------------
 # ---------- 辅助函数 ----------
 #------------------------------
-# 二次确认
+# 判断函数
 confirm() {
     while true; do
-        printf "\033[1;33m%b[Y/n]: \033[0m" "$*"
-        read -r answer
+        printf "\033[1;33m%b[y/N]: \033[0m" "$*"
+
+        if ! read -r answer; then
+            return 1
+        fi
+
         case "$answer" in
-            [Yy]) return 0 ;;
-            [Nn]) return 1 ;;
-            *) err "请回答Y或N" ;;
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
+            ""|[Nn]|[Nn][Oo]) return 1 ;;
+            *) err "请回答 y(yes) 或 n(no)" ;;
         esac
     done
 }
@@ -1345,6 +1375,8 @@ $CMD_delimiter
   DOWNLOAD <URL> <本地路径> 下载网络文件到本地
   ST/SPEEDTEST [-u URL] [-t 超时] ⤸
   -网络测速(默认 Cloudflare 10MB)
+  WGET <参数...>    网络下载工具(直接透传)
+  CURL <参数...>    网络传输工具(直接透传)
 
 //cecho -b "编解码与校验"
   BASE64/B64 -d <字符串>/[-d] -f <文件>  Base64编码/解码
@@ -1704,6 +1736,24 @@ EOF
 
     # 调用底层函数执行输出
     _cprint "${call_args[@]}"
+}
+
+# ---------- CURL 包装 ----------
+cmd_curl() {
+    if [ "$HAS_CURL" -eq 0 ]; then
+        err "当前系统未安装 curl"
+        return 127
+    fi
+    $_CURL "$@"
+}
+
+# ---------- WGET 包装 ----------
+cmd_wget() {
+    if [ "$HAS_WGET" -eq 0 ]; then
+        err "当前系统未安装 wget"
+        return 127
+    fi
+    $_WGET "$@"
 }
 
 
@@ -4710,10 +4760,10 @@ _ver_ge() {
 _get_latest_ver() {
     local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
     local tag=""
-    if command -v curl >/dev/null 2>&1; then
-        tag=$(curl -s -L --connect-timeout 3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
-    elif command -v wget >/dev/null 2>&1; then
-        tag=$(wget -qO- --timeout=3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
+    if [ "$HAS_CURL" -eq 1 ]; then
+        tag=$($_CURL -s -L --connect-timeout 3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
+    elif [ "$HAS_WGET" -eq 1 ]; then
+        tag=$($_WGET -qO- --timeout=3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
     fi
     echo "$tag"
 }
@@ -4741,10 +4791,10 @@ _update_check_count=0
 cmd_update() {
     local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
     local json=""
-    if command -v curl >/dev/null 2>&1; then
-        json=$(curl -s -L --connect-timeout 5 "$url" 2>/dev/null)
-    elif command -v wget >/dev/null 2>&1; then
-        json=$(wget -qO- --timeout=5 "$url" 2>/dev/null)
+    if [ "$HAS_CURL" -eq 1 ]; then
+        json=$($_CURL -s -L --connect-timeout 5 "$url" 2>/dev/null)
+    elif [ "$HAS_WGET" -eq 1 ]; then
+        json=$($_WGET -qO- --timeout=5 "$url" 2>/dev/null)
     else
         err "需要 curl 或 wget"
         return 1
@@ -4816,11 +4866,20 @@ check_tmpdir_size() {
         local size_mb=$(du -sm "$TMP_DIR" 2>/dev/null | cut -f1)
         [ -z "$size_mb" ] && return 0
         if [ "$size_mb" -gt 1 ]; then
-            _cprint -b -c 33 "[TMPDIR]临时目录 ($TMP_DIR) 大小达 ${size_mb}MB, 建议使用 TMPDIR -c 清理"
+            cecho -b -c 33 "[TMPDIR]临时目录 ($TMP_DIR) 大小达 ${size_mb}MB, 建议使用 TMPDIR -c 清理"
         fi
     fi
 }
 check_tmpdir_size
+
+# 网络工具提示
+    if [ "$net_tools_only_one" -eq 1 ]; then
+      if [ "$HAS_CURL" -eq 1 ]; then
+        cecho -c 93 -b "[NET] 你只有一个网络工具(CURL), 网络功能可能受限"
+    else
+        cecho -c 93 -b "[NET] 你只有一个网络工具(WGET), 网络功能可能受限"
+    fi
+fi
 # ---------- 主循环 ----------
 while true; do
     # 判断是否使用默认颜色(黑底亮白)

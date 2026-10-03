@@ -86,14 +86,16 @@ if you want to continue running other scripts internally, you can use SH
 The basic environment is Bash 4.0+. The following must be preinstalled:
 
 ```txt
-Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
+Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget <or> curl
 ```
 
 Missing the above dependencies will prevent the script from starting. Missing other dependencies may cause some commands to be unavailable.
 
+* If only one of curl and wget is present, a reminder will be displayed on every startup, and some network features will be unavailable; if neither is present, it cannot start.
+
 ### Miscellaneous
 
-Although this script has been developed for a long time, shortcomings are inevitable. If you encounter any problems, feel free to report them. If you do not like it, please do not flame me qwq.
+Although this script has been developed for a long time, shortcomings are inevitable. If you encounter any problems, feel free to report them. If you do not like it, please do not flame me 🙃
 
 ### License
 
