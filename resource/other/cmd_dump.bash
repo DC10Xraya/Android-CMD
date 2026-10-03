@@ -26,20 +26,31 @@ cmd_dump() {
         return 1
     fi
 
-    # 生成默认输出路径
-    if [ -z "$output" ]; then
-        output="$target_abs/DUMP_$(date +%Y%m%d_%H%M%S).txt"
+# 生成默认输出路径
+if [ -z "$output" ]; then
+    output="$target_abs/DUMP_$(date +%Y%m%d_%H%M%S).txt"
+else
+    # 输出路径转为绝对路径
+    local out_dir=$(dirname "$output")
+    local out_base=$(basename "$output")
+    if mkdir -p "$out_dir" 2>/dev/null; then
+        output=$(cd "$out_dir" 2>/dev/null && pwd)/"$out_base"
     else
-        # 输出路径转为绝对路径
-        local out_dir=$(dirname "$output")
-        local out_base=$(basename "$output")
-        if mkdir -p "$out_dir" 2>/dev/null; then
-            output=$(cd "$out_dir" 2>/dev/null && pwd)/"$out_base"
-        else
-            err "无法创建输出目录: $out_dir"
-            return 1
-        fi
+        err "无法创建输出目录: $out_dir"
+        return 1
     fi
+fi
+
+# 新增: 如果 output 指向目录, 自动在目录内生成默认文件名
+if [ -d "$output" ]; then
+    output="$output/DUMP_$(date +%Y%m%d_%H%M%S).txt"
+fi
+
+# 新增: 输出路径不能与目标目录相同
+if [ "$output" = "$target_abs" ]; then
+    err "输出路径不能与目标目录相同: $output"
+    return 1
+fi
 
     # 确保输出文件所在目录存在
     local out_parent=$(dirname "$output")
@@ -123,18 +134,18 @@ cmd_dump() {
     _dump_file() {
         local f="$1"
         if [ -L "$f" ]; then
-            # 符号链接：仅显示路径, 不带冒号
+            # 符号链接: 仅显示路径, 不带冒号
             echo "$f"
             echo
             return
         fi
         if [ -f "$f" ] && [ -r "$f" ] && _is_text_file "$f"; then
-            # 文本文件：带冒号, 显示内容
+            # 文本文件: 带冒号, 显示内容
             echo "$f:"
             "$_CAT" "$f" 2>/dev/null
             echo
         else
-            # 二进制文件或不可读文件：仅显示路径, 不带冒号
+            # 二进制文件或不可读文件: 仅显示路径, 不带冒号
             echo "$f"
             echo
         fi
