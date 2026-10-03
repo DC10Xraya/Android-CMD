@@ -2,6 +2,8 @@
 
 ## [简体中文](README.md) | **English**
 
+### A Bash interactive script designed for Android terminal environments, aiming to imitate CMD.exe while adding more unique features
+
 <p align="left">
   <img src="icon.png" alt="Android CMD" width="250">
 </p>
@@ -16,94 +18,80 @@
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Android](https://img.shields.io/badge/Platform-Android-brightgreen?logo=android)
 
-An interactive Bash script integrating common operations, network and system monitoring features (plus jokes), specifically designed to run on Android.
-
 ### Key Features
 
-**Network & Server**
-- `DOWNLOAD`: simpler download, just URL and local path
-- Windows‑style `PING`
-- `SCAN`, `PORTSCAN` (pseudo‑multithreaded scanning)
-- Interactive FTP client: supports connection, upload, download, batch operations (mget/mput), perfectly adapted for mobile operation
+Network & Servers
+- DOWNLOAD: Simpler downloads—just provide a URL and local path; the download tool is selected automatically
+- Windows-style PING, with support for many system parameters
+- SCAN, PORTSCAN (pseudo-multithreaded scanning, up to 128 threads)
+- (Pseudo-)interactive FTP client: supports connection, upload, download, and batch operations; can serve as a lightweight alternative client
 
-**System & Android Customisation**
-- Built‑in custom `TREE` command – no need for system `tree`
-- Full‑scale monitoring: `TASKMGR` (task manager), real‑time memory monitoring
-- Android‑specific: `GETPROP` (system properties), `RES/WM` (screen resolution), `LOGCAT` (system logs), `ADB`
+System & Android Customization
+- Built-in TREE command; no system-provided TREE required
+- Full-dimensional monitoring (real-time refresh): TASKMGR task manager, MONITOR real-time monitoring, CPUMONITOR CPU frequency monitoring
+- Android-specific: GETPROP (system properties), RES/WM (screen resolution), LOGCAT (system logs), ADB
+- WHOAMI outputs the username and automatically detects the current privilege level [correctly detects root and ADB (wired or wireless, including Shizuku)]
 
-**About Minecraft**
-- Mod downloader: `MCMODDOWNLOAD` downloads Java edition mods via Modrinth API in batch
-- Server simulator (hidden): `MCSERVER` simulates running a Paper server on Android
+### Features
+- Windows-style, with Windows aliases; all uppercase (commands you type are automatically converted to lowercase for matching)
+- One-click download and extraction for immediate use; easy to get started
+- Modular design, lazy loading, faster startup
+- Non-critical command functions are placed in the `resource` directory, making maintenance easier; you can add your own command functions at any time
+- Enhanced interaction: use the up/down arrow keys to recall history commands; the HISTORY command manages records
+- Configuration saving: saves your Color, Title, TMPDIR, and Clsd settings, so you do not need to configure them every time
+- 100+ built-in commands, and direct support for executing system commands
 
-### Highlights
-- Download, extract and use – easy to get started
-- Modular design with lazy loading (0.05+), faster startup; new functions can be placed in `resource/` for easy maintenance; config and history stored in `etc/` (0.06+)
-- Interactive enhancements: arrow up/down for command history, `HISTORY` command for management (0.06+)
-- Persistent configuration: saves colour, title, TMPDIR, clear‑screen default settings
-- Detects your privileges and displays different prompt symbols
-- Command-rich and powerful
-- Hidden `laugh` command (no tell you)
-- Minecraft‑related features and design
+### Core Base Modules (built into the main program)
 
-### Core Built‑in Modules
+1. **Color and output system** (`_cprint`/`cecho`/`ccat`)  
+   CECHO provides terminal output with colors and styles (bold, italic, underline, strikethrough), supporting 16 colors, 256 colors, and hexadecimal RGB.  
+   CCAT outputs multiline text or outputs a file, and parses `//cecho` in the content.
 
-1. **Colour & Output System** (`_cprint`/`cecho`/`ccat`)  
-   Provides coloured and styled (bold, italic, underline, strikethrough) terminal output, supports 16‑colour, 256‑colour and hex RGB, and can parse `//cecho` directives in files for colourful text display.
+2. **Command-line parser** (`parse_line`)  
+   Custom argument parsing, supporting single quotes, double quotes, escape characters, and comments (`#`); automatically expands variables and splits input into the array `PARSED_ARGS` for the main loop to dispatch commands.
 
-2. **Command Line Parser** (`parse_line`)  
-   Custom argument parser supporting single quotes, double quotes, escape characters and comments (`#`), splits input into array `PARSED_ARGS` for main loop command dispatch.
+3. **Configuration management** (`load_config`/`save_config`)  
+   Reads and writes user configurations such as default background color, foreground color, title display mode, and temporary directory from `etc/cmd_config`, and supports persistent saving.
 
-3. **Configuration Management** (`load_config`/`save_config`)  
-   Reads/writes default background colour, foreground colour, title display mode, temporary directory etc. from `etc/cmd_config`, and supports persistent saving.
+4. **History management** (`HISTORY`)  
+   Automatically loads and saves command history; supports history file size checks, deduplication, and various operations via the `HISTORY` command.
 
-4. **History Management** (`HISTFILE`/history related)  
-   Automatically loads and saves command history, checks history file size, deduplicates, and supports various `HISTORY` command operations.
+5. **Signal handling and exit mechanism**  
+   Handles exit signals and exits the entire script when idle; when executing a command, the command function itself is responsible for exiting that command.
 
-5. **Signal Handling & Exit Mechanisms** (`exit9`/`exit15`/signal traps)  
-   Handles Ctrl+C, TERM, etc., recursively kills child process trees, cleans temporary files, and implements safe exit (forceful or graceful).
+6. **Lazy loader** (`lazy_load`)  
+   Dynamically loads external commands `cmd_*.bash` from the `resource/` directory on demand, avoiding loading all extensions at startup and improving startup speed.
 
-6. **General Utility Functions** (`confirm`/`kill_tree`/`file_op`/`err`)  
-   Provides interactive confirmation, process‑tree killing, file copy/move (with overwrite confirmation), and red error output.
+7. **Version update check** (background check + `cmd_update`)  
+   At startup, fetches the latest version from the GitHub API in the background, caches the result, and prompts for updates in the main loop; the `UPDATE` command can manually view details.
 
-7. **Privilege Detection Module** (`PRIV_LEVEL`/`PROMPT_SYMBOL`)  
-   At startup, detects whether current user is root, adb or normal user via `id`, `ps`, `getprop`, and sets prompt accordingly (`#`/`$`/`->`).
-
-8. **Path & Directory Management** (`SCRIPT_DIR`/`RESOURCE_DIR`/`ETC_DIR`/`TMP_DIR`)  
-   Defines script root, resource, config and temporary directories, and ensures they exist and are writable.
-
-9. **Lazy Loader** (`lazy_load`)  
-   Dynamically loads external commands from `resource/cmd_*.bash` on demand, avoiding loading all extensions at startup for improved speed.
-
-10. **Initialisation Module** (`init_tools`/`load_splashes`/`get_title`)  
-    Checks for `busybox` and sets tool prefix, loads random splash messages, displays startup title and version info.
-
-11. **Version Update Check** (background check + `cmd_update`)  
-    At startup, fetches latest version from GitHub API in background, caches result and prompts for update in main loop; `UPDATE` command can be used manually for details.
-
-### How to RUN
-
-1. Extract the downloaded `.tar.gz` archive.
-2. Open a terminal and execute:
+### How to Use?
+1. Download the tar.gz archive from the latest release.
+2. Open a terminal and run the following commands:
 ```bash
-cd # directory where main script (cmd_main_dev) is located
+mkdir -p "the directory you want to extract to"
+tar -xzf "filename.tar.gz" -C "the directory you want to extract to"
+cd "the directory you extracted to"
 bash CMD_main_dev.bash
 ```
 
-After startup, type HELP or /? to see the full command list.
+After startup, enter HELP or /? to view the list of built-in commands;
+if you want to run system commands, you can use C(eval) or the BASH command to run system commands;
+if you want to continue running other scripts internally, you can use SH.
 
 ### Runtime Dependencies
 
-Bash 4.0+ is required, and the following must be pre‑installed:
+The basic environment is Bash 4.0+. The following must be preinstalled:
 
 ```txt
 Awk, Grep, Sed, Cat, Cut, Head, Tail, BC, wget<or>curl
 ```
 
-Missing these will prevent the script from starting. Missing other dependencies may cause some commands to fail.
+Missing the above dependencies will prevent the script from starting. Missing other dependencies may cause some commands to be unavailable.
 
 ### Miscellaneous
 
-Although this script has been developed for a long time, there may still be shortcomings. Feel free to raise any issues, but please don't flame if you don't like it. 😉
+Although this script has been developed for a long time, shortcomings are inevitable. If you encounter any problems, feel free to report them. If you do not like it, please do not flame me qwq.
 
 ### License
 
