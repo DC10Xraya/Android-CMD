@@ -1,12 +1,19 @@
 #resource/cmd_zip.bash
 # ---------- ZIP/压缩(支持多种格式和压缩率) ----------
 cmd_zip() {
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -lt 1 ]; then
-        err "用法: ZIP <输出文件> <源文件/目录...> [-f 格式] [-l 级别]"
-        cecho "  格式: zip, 7z, tar, tar.gz, tar.bz2, tar.xz (默认根据扩展名自动判断)"
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        cecho -b "用法: ZIP <输出文件> <源文件/目录...> [-f 格式] [-l 级别]"
+        cecho "  格式: zip, 7z, tar, tar.gz, tar.bz2, tar.xz, gz, bz2, xz"
+        cecho "        (默认根据输出扩展名自动判断)"
         cecho "  级别: 0-9 (默认 6)"
         cecho "示例: ZIP backup.zip /sdcard/DCIM"
         cecho "      ZIP data.7z /data/local -f 7z -l 9"
+        cecho "      ZIP out.tar.gz dir1 dir2 -l 9"
+        return 0
+    fi
+
+    if [ $# -lt 1 ]; then
+        err "缺少参数, 使用 ZIP -h 查看帮助"
         return 1
     fi
 
@@ -18,14 +25,27 @@ cmd_zip() {
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            -f) format="$2"; shift 2 ;;
-            -l) level="$2"; shift 2 ;;
-            *) sources+=("$1"); shift ;;
+            -f)
+                if [ $# -lt 2 ]; then err "参数 -f 需要格式名"; return 1; fi
+                format="$2"; shift 2 ;;
+            -l)
+                if [ $# -lt 2 ]; then err "参数 -l 需要级别(0-9)"; return 1; fi
+                level="$2"; shift 2 ;;
+            -*)
+                err "未知参数: $1, 使用 ZIP -h 查看帮助"
+                return 1 ;;
+            *)
+                sources+=("$1"); shift ;;
         esac
     done
 
     if [ ${#sources[@]} -eq 0 ]; then
         err "至少指定一个源文件/目录"
+        return 1
+    fi
+
+    if ! [[ "$level" =~ ^[0-9]$ ]]; then
+        err "压缩级别必须是 0-9 之间的整数"
         return 1
     fi
 
@@ -48,51 +68,72 @@ cmd_zip() {
     cecho "压缩格式: $format, 级别: $level"
     cecho "输出文件: $output"
 
-    local cmd=""
+    local ret=0
+
     case "$format" in
         zip)
             if command -v zip >/dev/null 2>&1; then
-                cmd="zip -r -$level \"$output\""
-            elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q zip; then
-                cmd="busybox zip -r -$level \"$output\""
+                zip -r "-$level" "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                ret=${PIPESTATUS[0]}
+            elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q '^zip$'; then
+                busybox zip -r "-$level" "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                ret=${PIPESTATUS[0]}
             else
                 err "未找到 zip 命令"
                 return 1
             fi
-            for src in "${sources[@]}"; do
-                cmd="$cmd \"$src\""
-            done
             ;;
+
         7z)
+            local z7=""
             if command -v 7z >/dev/null 2>&1; then
-                cmd="7z a -t7z -mx=$level \"$output\""
+                z7="7z"
             elif command -v 7za >/dev/null 2>&1; then
-                cmd="7za a -t7z -mx=$level \"$output\""
+                z7="7za"
             else
                 err "未找到 7z 或 7za 命令 (请安装 p7zip)"
                 return 1
             fi
-            for src in "${sources[@]}"; do
-                cmd="$cmd \"$src\""
-            done
+            "$z7" a -t7z "-mx=$level" "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            ret=${PIPESTATUS[0]}
             ;;
-        tar|tar.gz|tar.bz2|tar.xz)
+
+        tar)
             if ! command -v tar >/dev/null 2>&1; then
                 err "未找到 tar 命令"
                 return 1
             fi
-            local tar_opts=""
-            case "$format" in
-                tar)      tar_opts="-cf" ;;
-                tar.gz)   tar_opts="-czf"; export GZIP="-$level" ;;
-                tar.bz2)  tar_opts="-cjf"; export BZIP2="-$level" ;;
-                tar.xz)   tar_opts="-cJf"; export XZ_OPT="-$level" ;;
-            esac
-            cmd="tar $tar_opts \"$output\""
-            for src in "${sources[@]}"; do
-                cmd="$cmd \"$src\""
-            done
+            tar -cf "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            ret=${PIPESTATUS[0]}
             ;;
+
+        tar.gz)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            GZIP="-$level" tar -czf "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        tar.bz2)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            BZIP2="-$level" tar -cjf "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        tar.xz)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            XZ_OPT="-$level" tar -cJf "$output" "${sources[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            ret=${PIPESTATUS[0]}
+            ;;
+
         gz|bz2|xz)
             if [ ${#sources[@]} -ne 1 ]; then
                 err "$format 格式只能压缩单个文件"
@@ -103,21 +144,36 @@ cmd_zip() {
                 err "源文件不存在: $src"
                 return 1
             fi
+
             case "$format" in
-                gz)  cmd="gzip -$level -c \"$src\" > \"$output\"" ;;
-                bz2) cmd="bzip2 -$level -c \"$src\" > \"$output\"" ;;
-                xz)  cmd="xz -$level -c \"$src\" > \"$output\"" ;;
+                gz)
+                    if ! command -v gzip >/dev/null 2>&1; then err "未找到 gzip 命令"; return 1; fi
+                    gzip "-$level" -c "$src" > "$output"
+                    ret=$?
+                    ;;
+                bz2)
+                    if ! command -v bzip2 >/dev/null 2>&1; then err "未找到 bzip2 命令"; return 1; fi
+                    bzip2 "-$level" -c "$src" > "$output"
+                    ret=$?
+                    ;;
+                xz)
+                    if ! command -v xz >/dev/null 2>&1; then err "未找到 xz 命令"; return 1; fi
+                    xz "-$level" -c "$src" > "$output"
+                    ret=$?
+                    ;;
             esac
             ;;
+
         *)
             err "不支持的格式: $format"
             return 1
             ;;
     esac
 
-    eval "$cmd" 2>&1 | while IFS= read -r line; do cecho "$line"; done
-    local ret=$?
-    unset GZIP BZIP2 XZ_OPT 2>/dev/null
-    [ $ret -eq 0 ] && cecho "压缩完成" || err "压缩失败 (退出码: $ret)"
+    if [ $ret -eq 0 ]; then
+        cecho "压缩完成"
+    else
+        err "压缩失败 (退出码: $ret)"
+    fi
     return $ret
 }

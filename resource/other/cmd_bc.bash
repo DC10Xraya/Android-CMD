@@ -104,8 +104,9 @@ _bc_compute() {
     local scale="$2"
     local prefix_mode="$3"
 
-    # 预处理
-    expr=$(echo "$expr" | sed 's/π/pi/g; s/÷/\//g; s/×/*/g; s/·/*/g')
+  # 预处理
+  expr=$(echo "$expr" | sed 's/\*\*/^/g')
+  expr=$(echo "$expr" | sed 's/π/pi/g; s/÷/\//g; s/×/*/g; s/·/*/g')
     while [[ "$expr" =~ (\+\+|\+\-|\-\+|\-\-) ]]; do
         expr=$(echo "$expr" | sed -E 's/\+\+/+/g; s/\+-/-/g; s/-\+/-/g; s/--/+/g')
     done

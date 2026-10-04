@@ -1,7 +1,7 @@
 #resource/cmd_timer.bash
 cmd_timer() {
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        err "用法: TIMER [秒数]/[时间戳]"
+        cecho -b "用法: TIMER [秒数]/[时间戳]"
         cecho -b "示例:"
         cecho "TIMER 60                    # 60秒倒计时"
         cecho "TIMER 2026-07-20 15:30:00   # 到这个时间点的闹钟"
@@ -114,7 +114,7 @@ cmd_timer() {
 
     # 正常结束
     echo ""
-    for i in {1..46}; do
+    for i in {1..50}; do
         err "---------------!!!时间到!!!---------------"
     done
 

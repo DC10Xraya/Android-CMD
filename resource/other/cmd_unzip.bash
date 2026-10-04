@@ -1,11 +1,17 @@
 #resource/cmd_unzip.bash
 # ---------- UNZIP/解压(支持多种格式) ----------
 cmd_unzip() {
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -lt 2 ]; then
-        err "用法: UNZIP <压缩文件> [-d 目标目录]"
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        cecho -b "用法: UNZIP <压缩文件> [-d 目标目录]"
         cecho "支持格式: zip, 7z, tar, tar.gz, tar.bz2, tar.xz, gz, bz2, xz"
         cecho "示例: UNZIP backup.zip"
         cecho "      UNZIP data.7z -d /sdcard/extract"
+        cecho "      UNZIP log.gz                    # 解到当前目录"
+        return 0
+    fi
+
+    if [ $# -lt 1 ]; then
+        err "缺少参数, 使用 UNZIP -h 查看帮助"
         return 1
     fi
 
@@ -15,8 +21,15 @@ cmd_unzip() {
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            -d) dest_dir="$2"; shift 2 ;;
-            *) err "未知参数: $1"; return 1 ;;
+            -d)
+                if [ $# -lt 2 ]; then err "参数 -d 需要目录路径"; return 1; fi
+                dest_dir="$2"; shift 2 ;;
+            -*)
+                err "未知参数: $1, 使用 UNZIP -h 查看帮助"
+                return 1 ;;
+            *)
+                err "多余参数: $1"
+                return 1 ;;
         esac
     done
 
@@ -46,70 +59,138 @@ cmd_unzip() {
 
     cecho "识别格式: $format"
 
-    local cmd=""
+    local ret=0
+
     case "$format" in
         zip)
             if command -v unzip >/dev/null 2>&1; then
-                cmd="unzip -q \"$archive\""
-                [ -n "$dest_dir" ] && cmd="$cmd -d \"$dest_dir\""
-            elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q unzip; then
-                cmd="busybox unzip -q \"$archive\""
-                [ -n "$dest_dir" ] && cmd="$cmd -d \"$dest_dir\""
+                if [ -n "$dest_dir" ]; then
+                    unzip -q "$archive" -d "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                else
+                    unzip -q "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                fi
+                ret=${PIPESTATUS[0]}
+            elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q '^unzip$'; then
+                if [ -n "$dest_dir" ]; then
+                    busybox unzip -q "$archive" -d "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                else
+                    busybox unzip -q "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+                fi
+                ret=${PIPESTATUS[0]}
             else
                 err "未找到 unzip 命令"
                 return 1
             fi
             ;;
+
         7z)
+            local z7=""
             if command -v 7z >/dev/null 2>&1; then
-                cmd="7z x \"$archive\" -y"
-                [ -n "$dest_dir" ] && cmd="$cmd -o\"$dest_dir\""
+                z7="7z"
             elif command -v 7za >/dev/null 2>&1; then
-                cmd="7za x \"$archive\" -y"
-                [ -n "$dest_dir" ] && cmd="$cmd -o\"$dest_dir\""
+                z7="7za"
             else
                 err "未找到 7z 或 7za 命令"
                 return 1
             fi
+            if [ -n "$dest_dir" ]; then
+                "$z7" x "$archive" -y "-o$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            else
+                "$z7" x "$archive" -y 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            fi
+            ret=${PIPESTATUS[0]}
             ;;
-        tar|tar.gz|tar.bz2|tar.xz)
+
+        tar)
             if ! command -v tar >/dev/null 2>&1; then
                 err "未找到 tar 命令"
                 return 1
             fi
-            local tar_opts=""
-            case "$format" in
-                tar)      tar_opts="-xf" ;;
-                tar.gz)   tar_opts="-xzf" ;;
-                tar.bz2)  tar_opts="-xjf" ;;
-                tar.xz)   tar_opts="-xJf" ;;
-            esac
-            cmd="tar $tar_opts \"$archive\""
-            [ -n "$dest_dir" ] && cmd="$cmd -C \"$dest_dir\""
-            ;;
-        gz|bz2|xz)
-            if [ -z "$dest_dir" ]; then
-                dest_dir="."
+            if [ -n "$dest_dir" ]; then
+                tar -xf "$archive" -C "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            else
+                tar -xf "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
             fi
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        tar.gz)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            if [ -n "$dest_dir" ]; then
+                tar -xzf "$archive" -C "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            else
+                tar -xzf "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            fi
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        tar.bz2)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            if [ -n "$dest_dir" ]; then
+                tar -xjf "$archive" -C "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            else
+                tar -xjf "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            fi
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        tar.xz)
+            if ! command -v tar >/dev/null 2>&1; then
+                err "未找到 tar 命令"
+                return 1
+            fi
+            if [ -n "$dest_dir" ]; then
+                tar -xJf "$archive" -C "$dest_dir" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            else
+                tar -xJf "$archive" 2>&1 | while IFS= read -r line; do cecho "$line"; done
+            fi
+            ret=${PIPESTATUS[0]}
+            ;;
+
+        gz|bz2|xz)
+            [ -z "$dest_dir" ] && dest_dir="."
             local base=$(basename "$archive")
             local out_name=""
+            local decomp=""
             case "$format" in
-                gz)  out_name="${base%.gz}"; cmd="gzip -d -c \"$archive\" > \"$dest_dir/$out_name\"" ;;
-                bz2) out_name="${base%.bz2}"; cmd="bzip2 -d -c \"$archive\" > \"$dest_dir/$out_name\"" ;;
-                xz)  out_name="${base%.xz}"; cmd="xz -d -c \"$archive\" > \"$dest_dir/$out_name\"" ;;
+                gz)  out_name="${base%.gz}";  decomp="gzip" ;;
+                bz2) out_name="${base%.bz2}"; decomp="bzip2" ;;
+                xz)  out_name="${base%.xz}";  decomp="xz" ;;
             esac
-            if [ -f "$dest_dir/$out_name" ]; then
-                confirm "目标文件 $dest_dir/$out_name 已存在, 覆盖吗?" || { cecho "跳过"; return 0; }
+            if [ -z "$out_name" ] || [ "$out_name" = "$base" ]; then
+                err "无法推断解压后的文件名"
+                return 1
             fi
+            if ! command -v "$decomp" >/dev/null 2>&1; then
+                err "未找到 $decomp 命令"
+                return 1
+            fi
+            if [ -e "$dest_dir/$out_name" ]; then
+                if ! confirm "目标文件 $dest_dir/$out_name 已存在, 覆盖吗?"; then
+                    cecho "跳过"
+                    return 0
+                fi
+            fi
+            "$decomp" -d -c "$archive" > "$dest_dir/$out_name"
+            ret=$?
             ;;
+
         *)
             err "内部错误: 未知格式"
             return 1
             ;;
     esac
 
-    eval "$cmd" 2>&1 | while IFS= read -r line; do cecho "$line"; done
-    local ret=$?
-    [ $ret -eq 0 ] && cecho "解压完成" || err "解压失败 (退出码: $ret)"
+    if [ $ret -eq 0 ]; then
+        cecho "解压完成"
+    else
+        err "解压失败 (退出码: $ret)"
+    fi
     return $ret
 }
