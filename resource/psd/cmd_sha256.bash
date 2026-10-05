@@ -3,10 +3,10 @@ cmd_sha256() {
     # 显示帮助
     if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
         cecho -b "用法: SHA256/SHA256SUM [选项]"
-        cecho "  -f <文件>    计算文件的 SHA256 哈希"
-        cecho "  -d <字符串>  计算字符串的 SHA256 哈希"
+        cecho "  -f <文件>       计算文件的 SHA256 哈希"
+        cecho "  -d <字符串>     计算字符串的 SHA256 哈希"
         cecho "  -c <文件> <值>  校验文件的 SHA256 是否匹配指定值"
-        cecho "  -h, --help   显示此帮助"
+        cecho "  -h, --help      显示此帮助"
         return 0
     fi
 
