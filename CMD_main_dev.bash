@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.24 (dev0.346)"
+CMD_VER="0.25 (dev0.352)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -790,8 +790,12 @@ cmd_username() {
     if [ "$_IAMDC10XRAY_" = "1" ]; then
         cecho -b -c256 201 "!?兄弟确实很帅?!"
     else
-        err "!?兄弟以为自己很帅?!"
+    if [[ "$USERNAME" == "u0_a420" || "$USERNAME" == "u0_a0" ]]; then
+        cecho -c 36 "☒你与故人有点相像☒"
+    else
+        err "?!兄弟以为自己很帅!?"
     fi
+fi
 }
 
 # ---------- 标题 ----------
@@ -1403,17 +1407,17 @@ $CMD_delimiter
   CURL <参数...>             网络传输工具(直接透传)
 
 //cecho -b "编解码与校验"
-  BASE64/B64 -d <字符串>/[-d] -f <文件>  Base64编码/解码
-  SHA256 -d <字符串>/-f <文件>           计算文件的SHA256
-  SHA1 -d <字符串>/-f <文件>             计算文件的SHA1
-  MD5 <文件>                计算文件的MD5
-  CRC32 <文件>              计算文件的CRC32(cksum)
-  DIFF [参数] <1> <2>       比较两个文件/目录的差异
-  ZIPDUFF [参数] <源> <新>  比较两个ZIP文件的差异
-  JSON -w/[参数] <目标>     检验JSON有效性(jq/py/bash)
-  PSD [-n 长度] [-C 数量] [-a/-u/-l/-d/-s/-c 字符集]
-  --生成符合要求的随机密码
-  RAND [长度]               生成随机数(默认四位数)
+  B64 -d <字符串>/[-d] -f <文件>        Base64编码/解码
+  SHA1 [选项]                           计算/校验SHA1
+  SHA256 [选项]                         计算/校验SHA256
+  SHA512 [选项]                         计算/校验SHA512
+  MD5 <文件>                            计算文件的MD5
+  CRC32 <文件>                          计算文件的CRC32(cksum)
+  DIFF [参数] <1> <2>                   比较两个文件/目录的差异
+  ZIPDUFF [参数] <源> <新>              比较两个ZIP文件的差异
+  JSON -w/[参数] <目标>                 检验JSON有效性
+  PSD [-n 长度] [-C 数量] [选项...]     生成符合要求的随机密码
+  RAND [长度]                           生成随机数(默认四位数)
 
 //cecho -b "杂项"
   ECHO/PRINT [消息]          显示消息
@@ -1545,6 +1549,9 @@ cmd_whoami() {
     # ---------- 统一输出 ----------
     cecho "当前用户: $user"
     cecho "当前权限状态: $user_level"
+    if [ "$_IAMDC10XRAY_" = "1" ]; then
+        cecho -b -c256 201 "SP: ACMD 特殊用户(开发者)"
+    fi
 }
 
 cmd_id() {
@@ -1786,7 +1793,6 @@ cmd_yes() {
     # 如果被中断, 返回 130
     if [ $interrupted -eq 1 ]; then
         echo "" >&2
-        cecho -c 36 "[YES YES YES/YYY]"
         return 130
     fi
 }
@@ -5230,7 +5236,6 @@ while true; do
    PROMPT_STR=$(printf '\001\033[%s;%sm\002%s%s \001\033[0m\002' \
    "$BG" "$CMD_prompt_fg___" "$USERNAME" "$PROMPT_SYMBOL")
     if ! read -e -r -p "$PROMPT_STR" input; then
-        echo ""
         cmd_exit15
     fi
     # 判断空输入或纯注释
@@ -5360,6 +5365,7 @@ while true; do
     b64)       lazy_load "base64" && cmd_base64 "${args_array[@]}" ;;
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     systeminfo|sysinfo) lazy_load "systeminfo" && cmd_systeminfo ;;
+    sha512|sha512sum) lazy_load "sha512" && cmd_sha512 "${args_array[@]}" ;;
     sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
     sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
     300|china)   lazy_load "china" && cmd_china "${args_array[@]}" ;;
@@ -5373,14 +5379,14 @@ while true; do
         if lazy_load "$cmd"; then
             "cmd_$cmd" "${args_array[@]}"
         else
-            # 检测是否是系统命令
             if command -v "$cmd" >/dev/null 2>&1; then
-               _full="C $cmd ${args_array[*]}"
+               _full="C $cmd"
+               [ ${#args_array[@]} -gt 0 ] && _full+=" ${args_array[*]}"
                [ ${#_full} -gt 30 ] && _full="${_full:0:27}..."
                cecho -c 90 "$cmd: 系统命令(使用 \"$_full\" 来执行)"
-            else
-               err "$cmd: 命令未找到"
-        fi
+        else
+    err "$cmd: 命令未找到"
+fi
         fi
     fi
     ;;
