@@ -24,7 +24,7 @@ YES YES YES?
 野兽先辈的命令臭死符 [版本:114514.1919810]
 echo "Hello World"#问:这段代码的输出是什么?
 Bash VS Space
-8000Line+ Bash VS Brainfuck
+13000Line+ Bash VS Brainfuck
 来自 127.0.0.1 的回复: 数据=不要再Ping了
 Try listen 《title.wma》
 #!/bin/dcsh
@@ -47,3 +47,5 @@ PATH:😡😡😡
 https://github.com/DC10Xraya/Android-CMD
 ☠️☠️☠️
 No Way
+实际上兄弟
+in fect, bro
