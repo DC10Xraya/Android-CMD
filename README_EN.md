@@ -69,9 +69,15 @@ System & Android Customization
 1. Download the tar.gz archive from the latest release.
 2. Open a terminal and run the following commands:
 ```bash
-mkdir -p "the directory you want to extract to"
-tar -xzf "filename.tar.gz" -C "the directory you want to extract to"
-cd "the directory you extracted to"
+# 1. Create target dir
+mkdir -p "target_dir"
+# 2. Extract archive into it
+tar -xzf "archive_path" -C "target_dir"
+# 3. Run script (choose one)
+# A: without changing cwd
+bash "target_dir/CMD_main_dev.bash"
+# B: change cwd
+cd "target_dir"
 bash CMD_main_dev.bash
 ```
 
@@ -95,7 +101,7 @@ Missing the above dependencies will prevent the script from starting. Missing ot
 
 ### Miscellaneous
 
-Although this script has been developed for a long time, shortcomings are inevitable. If you encounter any problems, feel free to report them. If you do not like it, please do not flame me 🙃
+Although this script has been developed for a long time, shortcomings are inevitable. If you encounter any problems, feel free to report them. If you do not like it, please do not flame me 🍬🚚
 
 ### License
 
