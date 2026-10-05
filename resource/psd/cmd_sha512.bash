@@ -1,13 +1,12 @@
-# ---------- SHA1 函数 ----------
-cmd_sha1() {
+# ---------- SHA512 函数 ----------
+cmd_sha512() {
     # 显示帮助
     if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        cecho -b "用法: SHA1 [选项]"
-        cecho "  -f <文件>    计算文件的 SHA1 哈希"
-        cecho "  -d <字符串>  计算字符串的 SHA1 哈希"
-        cecho "  -c <文件> <值>  校验文件的 SHA1 是否匹配指定值"
+        cecho -b "用法: SHA512/SHA512SUM [选项]"
+        cecho "  -f <文件>    计算文件的 SHA512 哈希"
+        cecho "  -d <字符串>  计算字符串的 SHA512 哈希"
+        cecho "  -c <文件> <值>  校验文件的 SHA512 是否匹配指定值"
         cecho "  -h, --help   显示此帮助"
-        err "警告: SHA1 已不安全, 仅用于非安全场景"
         return 0
     fi
 
@@ -45,27 +44,27 @@ cmd_sha1() {
                 shift 3
                 ;;
             *)
-                err "未知选项: $1, 使用 SHA1 -h 查看帮助"
+                err "未知选项: $1, 使用 SHA512/SHA512SUM -h 查看帮助"
                 return 1
                 ;;
         esac
     done
 
     if [ -z "$mode" ] || [ -z "$data" ]; then
-        err "缺少参数, 使用 SHA1 -h 查看帮助"
+        err "缺少参数, 使用 SHA512/SHA512SUM -h 查看帮助"
         return 1
     fi
 
-    # 检测可用的 SHA1 命令
+    # 检测可用的 SHA512 命令
     local cmd_sha=""
-    if command -v sha1sum >/dev/null 2>&1; then
-        cmd_sha="sha1sum"
-    elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q sha1sum; then
-        cmd_sha="busybox sha1sum"
+    if command -v sha512sum >/dev/null 2>&1; then
+        cmd_sha="sha512sum"
+    elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -q sha512sum; then
+        cmd_sha="busybox sha512sum"
     elif command -v openssl >/dev/null 2>&1; then
-        cmd_sha="openssl dgst -sha1"
+        cmd_sha="openssl dgst -sha512"
     else
-        err "未找到可用的 SHA1 计算工具 (sha1sum, busybox, openssl)"
+        err "未找到可用的 SHA512 计算工具 (sha512sum, busybox, openssl)"
         return 1
     fi
 
@@ -90,7 +89,7 @@ cmd_sha1() {
     fi
 
     if [ -z "$hash" ]; then
-        err "计算 SHA1 失败"
+        err "计算 SHA512 失败"
         return 1
     fi
 

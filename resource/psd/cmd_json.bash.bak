@@ -198,6 +198,17 @@ _probe_parsers() {
     done
 }
 
+# 检查指定解析器是否可用(供 -s 强制时给出明确提示)
+_parser_available() {
+    _probe_parsers
+    case "$1" in
+        jq)   [[ -n "$_JQ_BIN" ]] ;;
+        py)   [[ -n "$_PY_BIN" ]] ;;
+        bash) return 0 ;;
+        *)    return 1 ;;
+    esac
+}
+
 # ---------- 内部函数 ----------
 
 # 打印标签(用于交互模式未指定类型时)
@@ -206,31 +217,26 @@ _print_label() {
     echo "--- $label 检测结果 ---"
 }
 
-# 封装校验和输出(有效绿色, 无效红色), 校验器自身输出已经带 "[解析器: xx]" 前缀
+# 封装校验和输出(有效绿色, 无效红色)
 _validate_and_print() {
     local content="$1"
     local type="$2"
     local parser="$3"
 
+    local result=0
     local output
     output=$(_validate_json_content "$content" "$type" "$parser" 2>&1)
-    local result=$?
+    result=$?
 
     if [[ $result -eq 0 ]]; then
-        cecho -c 92 "$output"
+        cecho -c 92 "有效"
     else
-        # 逐行打印, 每行一个错误
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            err "$line"
-        done <<< "$output"
+        err "$output"
     fi
     return $result
 }
 
-# 核心校验函数
-# 自动选择解析器: jq > py > bash (每次只用一个)
-# 输出格式: "[解析器: xxx] <消息>" 每行一条
+# 核心校验函数(只输出错误信息到 stdout, 返回状态码)
 _validate_json_content() {
     local content="$1"
     local force_type="$2"
@@ -247,59 +253,74 @@ _validate_json_content() {
 
     _probe_parsers
 
-    # 选择解析器(权威度: jq > py > bash)
-    local parser
+    # 确定尝试顺序
+    local parsers=()
     if [[ -n "$force_parser" ]]; then
-        parser="$force_parser"
-    elif [[ -n "$_JQ_BIN" ]]; then
-        parser="jq"
-    elif [[ -n "$_PY_BIN" ]]; then
-        parser="py"
+        parsers=("$force_parser")
     else
-        parser="bash"
+        parsers=("jq" "py" "bash")
     fi
 
-    # 强制指定的解析器不存在时, 直接给出提示
-    if [[ "$parser" == "jq" && -z "$_JQ_BIN" ]]; then
-        printf '[解析器: jq] jq 命令未找到(已尝试常见路径)\n'
+    local last_error=""
+    local tried_any=0
+    for parser in "${parsers[@]}"; do
+        local result=0
+        local err_msg=""
+        case "$parser" in
+            jq)
+                if [[ -n "$_JQ_BIN" ]]; then
+                    err_msg=$(printf '%s' "$clean_content" | "$_JQ_BIN" . 2>&1 >/dev/null)
+                    result=$?
+                    tried_any=1
+                else
+                    err_msg="jq 命令未安装(已尝试常见路径)"
+                    result=127
+                fi
+                ;;
+            py)
+                if [[ -n "$_PY_BIN" ]]; then
+                    err_msg=$(printf '%s' "$clean_content" | "$_PY_BIN" -c "import sys, json; json.load(sys.stdin)" 2>&1)
+                    result=$?
+                    tried_any=1
+                else
+                    err_msg="python 命令未安装(已尝试 python3/python/py 常见路径)"
+                    result=127
+                fi
+                ;;
+            bash)
+                err_msg=$(_validate_json_bash "$clean_content")
+                result=$?
+                tried_any=1
+                ;;
+            *)
+                err_msg="未知解析器"
+                result=1
+                tried_any=1
+                ;;
+        esac
+
+        if [[ $result -eq 0 ]]; then
+            return 0
+        fi
+
+        # 只有真正跑过的解析器, 其错误才作为候选
+        if [[ $result -ne 127 ]]; then
+            last_error=$(printf '%s' "$err_msg" | head -1 | tr -d '\n')
+        elif [[ -z "$last_error" ]]; then
+            last_error=$(printf '%s' "$err_msg" | head -1 | tr -d '\n')
+        fi
+    done
+
+    if [[ $tried_any -eq 0 ]]; then
+        echo "无可用解析器 (jq / python / bash 都不可用)"
         return 1
     fi
-    if [[ "$parser" == "py" && -z "$_PY_BIN" ]]; then
-        printf '[解析器: py] python 命令未找到(已尝试 python3/python/py 常见路径)\n'
-        return 1
+
+    if [[ -n "$last_error" ]]; then
+        echo "$last_error"
+    else
+        echo "无效 (原因未知)"
     fi
-
-    local err_output=""
-    local result=0
-    case "$parser" in
-        jq)
-            err_output=$(printf '%s' "$clean_content" | "$_JQ_BIN" . 2>&1 >/dev/null)
-            result=$?
-            ;;
-        py)
-            err_output=$(printf '%s' "$clean_content" | "$_PY_BIN" -c "import sys, json; json.load(sys.stdin)" 2>&1)
-            result=$?
-            ;;
-        bash)
-            err_output=$(_validate_json_bash "$clean_content")
-            result=$?
-            ;;
-    esac
-
-    if [[ $result -eq 0 ]]; then
-        printf '[解析器: %s] 有效\n' "$parser"
-        return 0
-    fi
-
-    if [[ -z "$err_output" ]]; then
-        printf '[解析器: %s] 无效(原因未知)\n' "$parser"
-        return 1
-    fi
-
-    # 逐行加前缀
-    while IFS= read -r line; do
-        printf '[解析器: %s] %s\n' "$parser" "$line"
-    done <<< "$err_output"
     return 1
 }
 
@@ -309,13 +330,15 @@ _json5_strip() {
     local content="$1"
     if command -v awk >/dev/null 2>&1; then
         printf '%s' "$content" | awk '
-        BEGIN { in_str=0; esc=0; in_bc=0 }
+        BEGIN { in_str=0; esc=0; in_lc=0; in_bc=0 }
         {
             line = $0
             out = ""
             i = 1
             n = length(line)
+            # 行注释只在非字符串时开始, 跨行不延续(本行结束即止)
             if (in_bc) {
+                # 查找 */
                 while (i <= n) {
                     if (substr(line, i, 2) == "*/") { in_bc=0; i+=2; break }
                     i++
@@ -337,19 +360,24 @@ _json5_strip() {
                     i++
                     continue
                 }
-                if (c2 == "//") { break }
+                if (c2 == "//") { break }           # 行注释, 跳过本行剩余
                 if (c2 == "/*") { in_bc=1; i+=2; continue }
                 if (c == "\"") { in_str=1; out = out c; i++; continue }
+                if (c == "'"'"'") { in_str=1; str_ch="'"'"'"; out = out c; i++; continue }
                 out = out c
                 i++
             }
             print out
         }
         ' | awk '
-        { lines[NR] = $0 }
+        # 处理尾随逗号: , 后紧跟 (可选空白) 再 } 或 ] 时删掉逗号
+        {
+            lines[NR] = $0
+        }
         END {
             for (k = 1; k <= NR; k++) {
                 s = lines[k]
+                # 反复替换 ,\s*([}\]]) -> \1
                 while (match(s, /,[ \t]*[}\]]/)) {
                     s = substr(s, 1, RSTART-1) substr(s, RSTART+1, RLENGTH-1)
                 }
@@ -368,32 +396,32 @@ _json5_strip() {
 
 # ---------- 纯 Bash JSON 校验(递归下降, 实验性) ----------
 # 只做语法层面的基本检查, 不保证 100% 符合 RFC 8259
-# 支持多错误收集: 出错时跳到下一个同步点(',' / '}' / ']' / EOF)继续解析
 # 能检测: 括号/引号平衡、键值结构、逗号位置、数字格式、字面量拼写等
 # 不检测: UTF-8 编码、\u 转义合法性、重复键、NaN/Infinity 等细节
 
 _validate_json_bash() {
-    _JB_JSON="$1"
-    _JB_LEN=${#1}
+    local json="$1"
+
+    _JB_JSON="$json"
+    _JB_LEN=${#json}
     _JB_POS=0
-    _JB_ERRORS=()
+    _JB_ERR=""
 
-    _jb_parse_value
-
+    if ! _jb_parse_value; then
+        printf '%s\n' "$_JB_ERR"
+        return 1
+    fi
     _jb_skip_ws
     if (( _JB_POS < _JB_LEN )); then
-        _jb_error "多余的字符 '${_JB_JSON:_JB_POS:1}'"
-    fi
-
-    if [[ ${#_JB_ERRORS[@]} -gt 0 ]]; then
-        printf '%s\n' "${_JB_ERRORS[@]}"
+        printf '位置 %d: 多余的字符 %q\n' "$_JB_POS" "${_JB_JSON:_JB_POS:1}"
         return 1
     fi
     return 0
 }
 
-_jb_error() {
-    _JB_ERRORS+=("位置 $_JB_POS: $1")
+_jb_fail() {
+    [[ -n "$_JB_ERR" ]] && return
+    _JB_ERR="位置 $_JB_POS: $1"
 }
 
 _jb_skip_ws() {
@@ -405,21 +433,10 @@ _jb_skip_ws() {
     done
 }
 
-# 向前跳过, 停在下一个可能结束当前上下文的字符(, } ])或 EOF
-_jb_skip_to_sync() {
-    while (( _JB_POS < _JB_LEN )); do
-        local c="${_JB_JSON:_JB_POS:1}"
-        case "$c" in
-            ','|'}'|']') return ;;
-            *) _JB_POS=$((_JB_POS + 1)) ;;
-        esac
-    done
-}
-
 _jb_parse_value() {
     _jb_skip_ws
     if (( _JB_POS >= _JB_LEN )); then
-        _jb_error "意外的输入结束, 期望一个值"
+        _jb_fail "意外的输入结束, 期望一个值"
         return 1
     fi
     local c="${_JB_JSON:_JB_POS:1}"
@@ -432,8 +449,7 @@ _jb_parse_value() {
         'n') _jb_parse_literal null ;;
         -|[0-9]) _jb_parse_number ;;
         *)
-            _jb_error "意外的字符 '$c'"
-            _jb_skip_to_sync
+            _jb_fail "意外的字符 '$c'"
             return 1
             ;;
     esac
@@ -445,8 +461,7 @@ _jb_parse_literal() {
         _JB_POS=$((_JB_POS + ${#kw}))
         return 0
     fi
-    _jb_error "无效的字面量(期望 $kw)"
-    _jb_skip_to_sync
+    _jb_fail "无效的字面量(期望 $kw)"
     return 1
 }
 
@@ -456,7 +471,7 @@ _jb_parse_string() {
         local c="${_JB_JSON:_JB_POS:1}"
         if [[ "$c" == '\' ]]; then
             if (( _JB_POS + 1 >= _JB_LEN )); then
-                _jb_error "字符串以孤立的反斜杠结尾"
+                _jb_fail "字符串以孤立的反斜杠结尾"
                 return 1
             fi
             _JB_POS=$((_JB_POS + 2))
@@ -468,7 +483,7 @@ _jb_parse_string() {
         fi
         _JB_POS=$((_JB_POS + 1))
     done
-    _jb_error "字符串未闭合"
+    _jb_fail "字符串未闭合"
     return 1
 }
 
@@ -483,16 +498,14 @@ _jb_parse_number() {
             _JB_POS=$((_JB_POS + 1))
         done
     else
-        _jb_error "无效的数字起始字符 '$c'"
-        _jb_skip_to_sync
+        _jb_fail "无效的数字起始字符 '$c'"
         return 1
     fi
 
     if [[ "${_JB_JSON:_JB_POS:1}" == '.' ]]; then
         _JB_POS=$((_JB_POS + 1))
         if ! [[ "${_JB_JSON:_JB_POS:1}" =~ [0-9] ]]; then
-            _jb_error "小数点后应当有数字"
-            _jb_skip_to_sync
+            _jb_fail "小数点后应当有数字"
             return 1
         fi
         while [[ "${_JB_JSON:_JB_POS:1}" =~ [0-9] ]]; do
@@ -506,8 +519,7 @@ _jb_parse_number() {
             _JB_POS=$((_JB_POS + 1))
         fi
         if ! [[ "${_JB_JSON:_JB_POS:1}" =~ [0-9] ]]; then
-            _jb_error "指数部分应当有数字"
-            _jb_skip_to_sync
+            _jb_fail "指数部分应当有数字"
             return 1
         fi
         while [[ "${_JB_JSON:_JB_POS:1}" =~ [0-9] ]]; do
@@ -518,112 +530,86 @@ _jb_parse_number() {
 }
 
 _jb_parse_object() {
-    _JB_POS=$((_JB_POS + 1))    # 跳过 '{'
+    _JB_POS=$((_JB_POS + 1))
     _jb_skip_ws
     if [[ "${_JB_JSON:_JB_POS:1}" == '}' ]]; then
         _JB_POS=$((_JB_POS + 1))
         return 0
     fi
-
     while :; do
         _jb_skip_ws
-        if (( _JB_POS >= _JB_LEN )); then
-            _jb_error "对象未闭合"
+        if [[ "${_JB_JSON:_JB_POS:1}" != '"' ]]; then
+            _jb_fail "对象的键必须是双引号字符串"
             return 1
         fi
+        _jb_parse_string || return 1
+        _jb_skip_ws
+        if [[ "${_JB_JSON:_JB_POS:1}" != ':' ]]; then
+            _jb_fail "对象的键后缺少 ':'"
+            return 1
+        fi
+        _JB_POS=$((_JB_POS + 1))
+        _jb_parse_value || return 1
+        _jb_skip_ws
 
         local c="${_JB_JSON:_JB_POS:1}"
-        # 循环开头遇到 '}' 说明上一个逗号是尾随逗号
-        if [[ "$c" == '}' ]]; then
-            _jb_error "对象结尾不允许尾随逗号"
-            _JB_POS=$((_JB_POS + 1))
-            return 0
-        fi
-
-        # 期望键
-        if [[ "$c" != '"' ]]; then
-            _jb_error "对象的键必须是双引号字符串"
-            _jb_skip_to_sync
-        else
-            if ! _jb_parse_string; then
-                # 字符串本身没闭合, 后续无法继续
-                return 1
-            fi
-            _jb_skip_ws
-            if [[ "${_JB_JSON:_JB_POS:1}" == ':' ]]; then
-                _JB_POS=$((_JB_POS + 1))
-                _jb_parse_value
-                _jb_skip_ws
-            else
-                _jb_error "对象的键后缺少 ':'"
-                _jb_skip_to_sync
-            fi
-        fi
-
-        # 分隔符
-        c="${_JB_JSON:_JB_POS:1}"
         case "$c" in
             ',')
                 _JB_POS=$((_JB_POS + 1))
+                _jb_skip_ws
+                if [[ "${_JB_JSON:_JB_POS:1}" == '}' ]]; then
+                    _jb_fail "对象结尾不允许尾随逗号"
+                    return 1
+                fi
                 ;;
             '}')
                 _JB_POS=$((_JB_POS + 1))
                 return 0
                 ;;
             '')
-                _jb_error "对象未闭合"
+                _jb_fail "对象未闭合"
                 return 1
                 ;;
             *)
-                _jb_error "对象中意外的字符 '$c'"
-                _jb_skip_to_sync
+                _jb_fail "对象中意外的字符 '$c'"
+                return 1
                 ;;
         esac
     done
 }
 
 _jb_parse_array() {
-    _JB_POS=$((_JB_POS + 1))    # 跳过 '['
+    _JB_POS=$((_JB_POS + 1))
     _jb_skip_ws
     if [[ "${_JB_JSON:_JB_POS:1}" == ']' ]]; then
         _JB_POS=$((_JB_POS + 1))
         return 0
     fi
-
     while :; do
+        _jb_parse_value || return 1
         _jb_skip_ws
-        if (( _JB_POS >= _JB_LEN )); then
-            _jb_error "数组未闭合"
-            return 1
-        fi
 
         local c="${_JB_JSON:_JB_POS:1}"
-        # 循环开头遇到 ']' 说明上一个逗号是尾随逗号
-        if [[ "$c" == ']' ]]; then
-            _jb_error "数组结尾不允许尾随逗号"
-            _JB_POS=$((_JB_POS + 1))
-            return 0
-        fi
-
-        _jb_parse_value
-        _jb_skip_ws
-
-        c="${_JB_JSON:_JB_POS:1}"
         case "$c" in
             ',')
                 _JB_POS=$((_JB_POS + 1))
+                _jb_skip_ws
+                if [[ "${_JB_JSON:_JB_POS:1}" == ']' ]]; then
+                    _jb_fail "数组结尾不允许尾随逗号"
+                    return 1
+                fi
                 ;;
             ']')
                 _JB_POS=$((_JB_POS + 1))
                 return 0
                 ;;
             '')
-                _jb_error "数组未闭合"
+                _jb_fail "数组未闭合"
                 return 1
                 ;;
             *)
-                _jb_error "数组中意外的字符 '$c'"
-                _jb_skip_to_sync
+                _jb_fail "数组中意外的字符 '$c'"
+                return 1
                 ;;
         esac
     done

@@ -5,18 +5,16 @@ cmd_sha256() {
         cecho -b "用法: SHA256/SHA256SUM [选项]"
         cecho "  -f <文件>    计算文件的 SHA256 哈希"
         cecho "  -d <字符串>  计算字符串的 SHA256 哈希"
-        cecho "  -c <文件> <值>  校验文件的 SHA256 是否匹配指定值"
         cecho "  -h, --help   显示此帮助"
         return 0
     fi
 
     local mode=""
     local data=""
-    local expected=""
     while [ $# -gt 0 ]; do
         case "$1" in
             -f)
-                if [ -z "${2:-}" ]; then
+                if [ -z "$2" ]; then
                     err "缺少文件参数"
                     return 1
                 fi
@@ -25,23 +23,13 @@ cmd_sha256() {
                 shift 2
                 ;;
             -d)
-                if [ -z "${2:-}" ]; then
+                if [ -z "$2" ]; then
                     err "缺少字符串参数"
                     return 1
                 fi
                 mode="string"
                 data="$2"
                 shift 2
-                ;;
-            -c)
-                if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
-                    err "缺少参数: -c <文件路径> <希望的值>"
-                    return 1
-                fi
-                mode="check"
-                data="$2"
-                expected="$3"
-                shift 3
                 ;;
             *)
                 err "未知选项: $1, 使用 SHA256/SHA256SUM -h 查看帮助"
@@ -69,7 +57,7 @@ cmd_sha256() {
     fi
 
     local hash=""
-    if [ "$mode" = "file" ] || [ "$mode" = "check" ]; then
+    if [ "$mode" = "file" ]; then
         if [ ! -f "$data" ]; then
             err "文件不存在: $data"
             return 1
@@ -88,22 +76,10 @@ cmd_sha256() {
         fi
     fi
 
-    if [ -z "$hash" ]; then
+    if [ -n "$hash" ]; then
+        cecho "$hash"
+    else
         err "计算 SHA256 失败"
         return 1
     fi
-
-    if [ "$mode" = "check" ]; then
-        local expected_lower
-        expected_lower=$(printf '%s' "$expected" | tr 'A-Z' 'a-z')
-        if [ "$hash" = "$expected_lower" ]; then
-            cecho "符合"
-            return 0
-        else
-            cecho "不符合"
-            return 1
-        fi
-    fi
-
-    cecho "$hash"
 }
