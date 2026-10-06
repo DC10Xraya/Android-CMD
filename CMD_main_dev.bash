@@ -1,6 +1,6 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.25 (dev0.352)"
+CMD_VER="0.25.1 (dev0.352)"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
 # ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
@@ -1399,6 +1399,7 @@ $CMD_delimiter
   NETNEIG                    扫描局域网下的主机
   FTP [参数]                 FTP功能
   PING [参数]                测试网络连接
+  PING6 [参数]               (=PING -6)
   SCAN [参数]                扫描网络中的存活主机
   PORTSCAN [参数]            扫描指定地址的存活端口
   DOWNLOAD <URL> <本地路径>  下载网络文件到本地
@@ -5360,6 +5361,9 @@ while true; do
     netneig|netneigh|netneighbor)  
         lazy_load "scan"  # 预加载依赖
         lazy_load "netneig" && cmd_netneig ;;
+    ping6)
+        lazy_load "ping" # 预加载依赖
+        lazy_load "ping6" && cmd_ping6 "${args_array[@]}" ;;
     # ---------- 资源目录别名 ----------
     codewc|wccode) lazy_load "codewc" && cmd_codewc "${args_array[@]}" ;;
     b64)       lazy_load "base64" && cmd_base64 "${args_array[@]}" ;;
