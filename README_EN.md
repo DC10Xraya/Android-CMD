@@ -74,9 +74,10 @@ mkdir -p "target_dir"
 # 2. Extract archive into it
 tar -xzf "archive_path" -C "target_dir"
 # 3. Run script (choose one)
-# A: without changing cwd
+# (Then just run:)
+# A
 bash "target_dir/CMD_main_dev.bash"
-# B: change cwd
+# B
 cd "target_dir"
 bash CMD_main_dev.bash
 ```
