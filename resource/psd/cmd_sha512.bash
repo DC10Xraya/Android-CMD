@@ -97,10 +97,10 @@ cmd_sha512() {
         local expected_lower
         expected_lower=$(printf '%s' "$expected" | tr 'A-Z' 'a-z')
         if [ "$hash" = "$expected_lower" ]; then
-            cecho "符合"
+            cecho -c 92 "符合"
             return 0
         else
-            cecho "不符合"
+            err "不符合"
             return 1
         fi
     fi
