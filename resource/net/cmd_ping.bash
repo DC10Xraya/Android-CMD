@@ -1,6 +1,5 @@
 #resource/cmd_ping.bash
-#Android CMD PING remake dev 2026_10_01_bug_a
-#qwq
+#Android CMD PING remake dev 2026_10_06
 cmd_ping() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
     cecho -b "用法: PING [-n] [-nf/-inf] [-f] [-w] [-W] [-i] [-s] [-I] [-t] [-4|-6] [-b] [-B] [-S] [-r] [-L] [-D] [-Dp] [-v] [-q] [-V] <域名/IP>"
@@ -33,7 +32,7 @@ cmd_ping() {
     return 0
 fi
 
-    # ---------- 参数解析 ----------
+    # ---------- 选项解析 ----------
     local count=0 mode="count" target="" packet_size=""
     local per_packet_timeout=1
     local total_timeout=0
@@ -171,7 +170,7 @@ fi
                 if [ -z "$target" ]; then
                     target="$1"; shift
                 else
-                    err "多余的参数: $1"; valid_args=0; break
+                    err "多余的选项: $1"; valid_args=0; break
                 fi
                 ;;
         esac
@@ -209,36 +208,41 @@ fi
 
     # ---------- -V 版本信息 ----------
     if [ $show_version -eq 1 ]; then
-        cecho -b "PING 函数版本: Android CMD PING remake dev 2026_10_01_bug_a"
-        cecho "底层 ping 版本信息:"
-        local vout
-        vout=$(ping -V 2>&1)
-        if [ -n "$vout" ]; then
-            echo "$vout" | while IFS= read -r vline; do
-                cecho "    $vline"
-            done
-        else
-            err "    无法获取底层 ping 版本"
-        fi
-        if command -v ping6 >/dev/null 2>&1; then
-            cecho "ping6 (IPv6 回退方案):"
-            local vout6
-            vout6=$(ping6 -V 2>&1 | head -1)
-            [ -n "$vout6" ] && cecho "    $vout6"
-        else
-            cecho "未检测到 ping6"
-        fi
-        return 0
+    cecho -b "PING 函数版本: Android CMD PING remake dev 2026_10_06"
+    cecho "底层 ping 版本信息:"
+    local vout
+    vout=$(ping -V 2>&1)
+    if [ -n "$vout" ]; then
+        echo "$vout" | while IFS= read -r vline; do
+            cecho -c 92 "    $vline"
+        done
+    else
+        err "    无法获取底层 ping 版本"
     fi
-
-    [ -z "$target" ] && { err "需要指定目标 IP 地址或域名"; return 1; }
-
-    if [ "$mode" = "count" ] && [ "$count" -eq 0 ]; then
-        count=4
+    if ping -6 -c 1 ::1 >/dev/null 2>&1; then
+    cecho -c 92 "    ping 支持 -6选项"
+    else
+    err "    ping 不支持 -6选项"
     fi
+    if command -v ping6 >/dev/null 2>&1; then
+        cecho "ping6 (IPv6 回退方案):"
+        local vout6
+        vout6=$(ping6 -V 2>&1 | head -1)
+        [ -n "$vout6" ] && cecho -c 92 "    $vout6"
+    else
+        err "    未检测到 ping6"
+    fi
+    cecho -b "TIP: 优先 ping -6, 回退ping6, 如果要使用IPV6 ping, 至少得有这两个中的其中一个"
+    return 0
+fi
 
-    command -v ping >/dev/null 2>&1 || { err "未找到 ping 命令"; return 1; }
+[ -z "$target" ] && { err "需要指定目标 IP 地址或域名"; return 1; }
 
+if [ "$mode" = "count" ] && [ "$count" -eq 0 ]; then
+    count=4
+fi
+
+command -v ping >/dev/null 2>&1 || { err "未找到 ping 命令"; return 1; }
     # ---------- 辅助函数 ----------
     is_ip() {
         echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
@@ -488,9 +492,6 @@ fi
     if [ $quiet -eq 0 ]; then
         if [ $flood_mode -eq 1 ] && ! can_use_real_flood; then
             cecho "洪水模拟模式: 发送接近无限个包, 包大小${data_bytes}字节, 间隔0.2秒"
-        fi
-        if [ $use_ping6 -eq 1 ]; then
-            cecho "已回退至 ping6"
         fi
         cecho "正在 Ping $display_target 具有 $data_bytes($(echo "$data_bytes+$icmp_header" | bc)) 字节的数据:"
     fi
