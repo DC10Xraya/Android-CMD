@@ -1,10 +1,10 @@
 #!/bin/bash
 # Android CMD(VER: ⤸)
-CMD_VER="0.25.1 (dev0.352)"
+CMD_VER="0.30_pre2"
 # https://github.com/DC10Xraya/Android-CMD
 # tip: 终端长度65获得最佳观感(帮助菜单在这个情况下制作)
-# ------CMDINFO------(既是为了告诉正在读代码的你, 也是一个命令)
-cmd_cmdinfo() {
+# ------CMDINFO------
+cmd_info() {
 cecho -b "--- 关于 Android CMD ---"
     ccat << EOF
 版本: $CMD_VER
@@ -105,6 +105,7 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------- 工具检测 -------
+# 万年不变的检测工具还是变了
 init_tools() {
     # 选择工具: 优先系统独立命令, 其次 busybox 兜底
     _pick_tool() {
@@ -219,12 +220,23 @@ _expand_var() {
         '$sdir')       printf '%s' "$SCRIPT_DIR" ;;
         '$self'|'$0')  printf '%s' "$0" ;;
         *)
-            # 通用展开: 交由 bash 自行解析 $VAR / ${VAR} / ${VAR:-x} 等
-            local _val
-            if _val=$(eval "printf '%s' \"$_lit\"" 2>/dev/null); then
-                printf '%s' "$_val"
+            # 通用展开: 纯字符串处理, 不使用 eval(规避命令注入)
+            local _name="${_lit#\$}"
+            _name="${_name#\{}"
+            _name="${_name%\}}"
+            # 处理 ${VAR:-default} 形式
+            if [[ "$_name" == *:-* ]]; then
+                local _v="${_name%%:-*}"
+                local _d="${_name#*:-}"
+                if [[ "$_v" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+                    printf '%s' "${!_v:-$_d}"
+                else
+                    printf '%s' "$_lit"
+                fi
+            elif [[ "$_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+                printf '%s' "${!_name}"
             else
-                # 无法展开时保持原样
+                # 无法解析时保持原样
                 printf '%s' "$_lit"
             fi
             ;;
@@ -471,11 +483,44 @@ cprint_block() {
 }
 
 # ---------- ccat ----------
-#   无引号展开变量, 带引号不展开
-#   ccat "可选文件路径(支持相对路径,使用脚本自身路径拼接)" << "EOF"
-#   普通行(默认颜色)
-#   //cecho -c 93 "特殊颜色文本"
-#   EOF
+# 规则：
+#   普通行              → 原样输出(变量是否展开取决于 heredoc 是否带引号)
+#   //cecho ...         → 按 parse_line 解析后交给 cecho(引号内识别变量)
+#   \//cecho ...        → 去掉一个反斜杠, 输出字面 //cecho ...
+#   //cecho(无参数)   → 报错, 防止误写
+#
+# heredoc 建议：
+#   ccat << "EOF"   ← 推荐：普通行的 $VAR 保持字面
+#   ccat << EOF     ← 不推荐：普通行会先被 shell 展开一次
+#
+# //cecho 后内容的引号必须配平(与 parse_line 同款状态机, 不会误判)
+
+# 检查一行引号是否配平(与 parse_line 状态机一致)
+# 只处理裸 '/" 和 \ 转义, $'...' / $"..." / $(...) 不在范围内
+_ccat_quotes_ok() {
+    local s="$1"
+    local i len=${#s} c escape=0 in_single=0 in_double=0
+    for (( i=0; i<len; i++ )); do
+        c="${s:i:1}"
+        if [ $escape -eq 1 ]; then escape=0; continue; fi
+        if [ $in_single -eq 1 ]; then
+            [ "$c" = "'" ] && in_single=0
+        elif [ $in_double -eq 1 ]; then
+            case "$c" in
+                '\') escape=1 ;;
+                '"') in_double=0 ;;
+            esac
+        else
+            case "$c" in
+                "'")  in_single=1 ;;
+                '"')  in_double=1 ;;
+                '\')  escape=1 ;;
+            esac
+        fi
+    done
+    [ $in_single -eq 0 ] && [ $in_double -eq 0 ] && [ $escape -eq 0 ]
+}
+
 ccat() {
     local input_file=""
     if [ $# -eq 0 ]; then
@@ -503,37 +548,51 @@ ccat() {
         return 1
     fi
 
-    # 接管 INT trap: 允许在输出过程中随时 Ctrl+C 中断
-    local old_int_trap
+    # 接管 INT：允许 Ctrl+C 中断输出
+    local old_int_trap _ccat_interrupted=0
     old_int_trap=$(trap -p INT)
-    local _ccat_interrupted=0
     trap '_ccat_interrupted=1' INT
 
-    local line
+    local line lineno=0
     while IFS= read -r line; do
-        # 每行开头检查中断标志
+        lineno=$((lineno + 1))
+
         if [ "$_ccat_interrupted" -eq 1 ]; then
             break
         fi
 
-        if [[ "$line" =~ ^[[:space:]]*//cecho[[:space:]]+(.*) ]]; then
+        # ---- 转义：\//cecho → 字面 //cecho ----
+        if [[ "$line" =~ ^([[:space:]]*)\\(//cecho.*)$ ]]; then
+            cecho "${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+            continue
+        fi
+
+        # ---- 指令行：//cecho(无参数)→ 报错 ----
+        if [[ "$line" =~ ^[[:space:]]*//cecho[[:space:]]*$ ]]; then
+            err "ccat: 第 $lineno 行 //cecho 缺少参数"
+            continue
+        fi
+
+        # ---- 指令行：//cecho ----
+        if [[ "$line" =~ ^[[:space:]]*//cecho[[:space:]]+(.*)$ ]]; then
             local args="${BASH_REMATCH[1]}"
-            if [[ ! "$args" =~ .*[\'\"][^\'\"]*[\'\"]$ ]]; then
-                err "ccat: //cecho 内容必须用引号包裹: $line"
+            if ! _ccat_quotes_ok "$args"; then
+                err "ccat: 第 $lineno 行 //cecho 引号未配平: $line"
                 continue
             fi
             parse_line "$args"
             if [ ${#PARSED_ARGS[@]} -eq 0 ]; then
-                err "ccat: //cecho 缺少参数"
+                err "ccat: 第 $lineno 行 //cecho 缺少参数"
                 continue
             fi
             cecho "${PARSED_ARGS[@]}"
-        else
-            cecho "$line"
+            continue
         fi
+
+        # ---- 普通行 ----
+        cecho "$line"
     done < "$input_file"
 
-    # 恢复原来的 INT trap
     if [ -n "$old_int_trap" ]; then
         eval "$old_int_trap"
     else
@@ -545,7 +604,6 @@ ccat() {
     fi
     return 0
 }
-
 # -------- 懒惰加载 --------
 # 存储通过资源文件加载的命令函数名
 LOADED_RES_CMDS=()
@@ -584,6 +642,7 @@ lazy_load() {
 }
 # ---------- 配置 ----------
 CLS_TITLE=1   # 默认显示标题
+UPDATE_PRE=0  # 0=不关注预发布 1=关注预发布
 TMP_DIR=""    # 临时目录, 稍后初始化
 load_config() {
     if [ -f "$COLOR_CONFIG_FILE" ]; then
@@ -599,6 +658,7 @@ load_config() {
                 CLS_TITLE) CLS_TITLE="${value:-1}" ;;
                 TMPDIR) TMP_DIR="$value" ;;
                 TITLE) CUSTOM_TITLE="$value" ;;
+                UPDATE_PRE) UPDATE_PRE="${value:-0}" ;;
             esac
         done < "$COLOR_CONFIG_FILE"
     fi
@@ -611,6 +671,7 @@ save_config() {
         echo "TITLE=$CUSTOM_TITLE"
         echo "CLS_TITLE=$CLS_TITLE"
         echo "TMPDIR=$TMP_DIR"
+        echo "UPDATE_PRE=$UPDATE_PRE"
     } > "$COLOR_CONFIG_FILE" 2>/dev/null
 }
 
@@ -785,7 +846,6 @@ if [[ "$USERNAME" == "u0_a420" || "$USERNAME" == "u0_a0" ]]; then
     fi
 fi
 PRIV_LEVEL_0="$PRIV_LEVEL"
-
 cmd_username() {
     if [ "$_IAMDC10XRAY_" = "1" ]; then
         cecho -b -c256 201 "!?兄弟确实很帅?!"
@@ -800,11 +860,11 @@ fi
 
 # ---------- 标题 ----------
 get_title() {
+    # 原始版本还会显示系统的版本(为了看起来版本号更长)
     if [ -n "$CUSTOM_TITLE" ]; then
         cecho "$CUSTOM_TITLE"
     else
-        local title_prefix="Android CMD [版本 $CMD_VER]"
-        cecho -b "$title_prefix"
+        cecho -b "Android CMD [版本 $CMD_VER]"
     fi
 
     if [ "$_IAMDC10XRAY_" = "1" ]; then
@@ -821,8 +881,6 @@ get_title() {
 
     if [ "$_IAMDC10XRAY_" != "1" ]; then
         cecho -c "#C0C0C0" "使用 HELP 或 /? 来查看命令列表(Ctrl+D或Ctrl+C退出)"
-    else
-     :
     fi
 }
 #------------------------------
@@ -846,14 +904,26 @@ confirm() {
 }
 
 # 递归杀死进程树
+# 返回码: 0 = 已处理; 2 = 目标是当前脚本(或祖先进程), 拒绝执行
 _kill_process_tree() {
     local pid=$1
     local sig=$2
     [ -z "$sig" ] && sig="TERM"
-    [ "$pid" -eq $$ ] && return
+
+    # 保护: 若目标是当前脚本 ($$) 或其任意祖先, 直接拒绝
+    # 用 $_AWK 以兼容 busybox 兜底, 避免无独立 awk 时保护失效
+    local _p=$$
+    while [ -n "$_p" ] && [ "$_p" -gt 1 ]; do
+        if [ "$pid" -eq "$_p" ]; then
+            return 2
+        fi
+        _p=$($_AWK '/^PPid:/ {print $2}' "/proc/$_p/status" 2>/dev/null)
+    done
 
     if [ -d "/proc" ]; then
-        local children=$(grep -l "^PPid:[[:space:]]*$pid$" /proc/*/status 2>/dev/null | cut -d/ -f3)
+        local children
+        children=$($_GREP -l "^PPid:[[:space:]]*$pid$" /proc/*/status 2>/dev/null | $_CUT -d/ -f3)
+        local child
         for child in $children; do
             _kill_process_tree "$child" "$sig"
         done
@@ -869,19 +939,7 @@ _kill_process_tree() {
             kill -KILL "$pid" 2>/dev/null
         fi
     fi
-}
-
-# 暴力版本
-_kill_process_tree_force() {
-    local pid=$1
-    [ "$pid" -eq $$ ] && return
-    if [ -d "/proc" ]; then
-        local children=$(grep -l "^PPid:[[:space:]]*$pid$" /proc/*/status 2>/dev/null | cut -d/ -f3)
-        for child in $children; do
-            _kill_process_tree_force "$child"
-        done
-    fi
-    kill -KILL "$pid" 2>/dev/null
+    return 0
 }
 
 # ---------- EXIT ----------
@@ -915,58 +973,216 @@ cmd_killself() {
 #---------- 命令实现函数(序章) ----------
 #--------------------------------------
 # 颜色设置
-cmd_color() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        {
-            cecho -b "设置控制台默认前景和背景色"
-            cecho "COLOR -def            恢复默认颜色(黑底亮白)"
-            cecho "COLOR [背景][前景]    设置颜色,如 COLOR 0A"
-            echo ""
-            cecho -b "颜色代码: "
-            cecho "   0 = 黑色       8 = 灰色"
-            cecho "   1 = 蓝色       9 = 淡蓝"
-            cecho "   2 = 绿色       A = 淡绿"
-            cecho "   3 = 青色       B = 淡青"
-            cecho "   4 = 红色       C = 淡红"
-            cecho "   5 = 紫色       D = 淡紫"
-            cecho "   6 = 黄色       E = 淡黄"
-            cecho "   7 = 白色       F = 亮白"
-            echo ""
-            cecho "示例: COLOR 0A    黑色背景亮绿前景"
-        }
+# ============ 颜色解析辅助 ============
+# Windows 风格前景色代码 (0-9A-F → ANSI)
+_win_fg_code() {
+    case "$1" in
+        0) printf '30';; 1) printf '34';; 2) printf '32';; 3) printf '36';;
+        4) printf '31';; 5) printf '35';; 6) printf '33';; 7) printf '37';;
+        8) printf '90';; 9) printf '94';; A) printf '92';; B) printf '96';;
+        C) printf '91';; D) printf '95';; E) printf '93';; F) printf '97';;
+        *) return 1 ;;
+    esac
+}
+
+# Windows 风格背景色代码 (0-9A-F → ANSI)
+_win_bg_code() {
+    case "$1" in
+        0) printf '40';; 1) printf '44';; 2) printf '42';; 3) printf '46';;
+        4) printf '41';; 5) printf '45';; 6) printf '43';; 7) printf '47';;
+        8) printf '100';; 9) printf '104';; A) printf '102';; B) printf '106';;
+        C) printf '101';; D) printf '105';; E) printf '103';; F) printf '107';;
+        *) return 1 ;;
+    esac
+}
+
+# 解析任意颜色规格 → ANSI SGR 片段
+# $1 = 规格 (#RRGGBB / 0-255 / 0-9A-F)
+# $2 = 0 前景(默认) / 1 背景
+# 输出示例: "38;2;255;0;0" (真彩), "38;5;200" (256色), "97" (Windows)
+_parse_color_spec() {
+    local spec="$1"
+    local is_bg="${2:-0}"
+    local prefix
+    if [ "$is_bg" -eq 1 ]; then prefix="48"; else prefix="38"; fi
+
+    [ -z "$spec" ] && return 1
+
+    # ---- #RRGGBB 真彩色(不支持 alpha) ----
+    if [[ "$spec" =~ ^#([0-9A-Fa-f]{6})$ ]]; then
+        local hex="${BASH_REMATCH[1]}"
+        local r=$((16#${hex:0:2}))
+        local g=$((16#${hex:2:2}))
+        local b=$((16#${hex:4:2}))
+        printf '%s;2;%d;%d;%d' "$prefix" "$r" "$g" "$b"
         return 0
     fi
-    if [ "$1" = "-def" ]; then
-        BG=40; FG=97; save_config; cecho "颜色已重置为默认值"; return 0
+    # 带 # 但格式错(如 #RRGGBBAA / #RRGGB)
+    [[ "$spec" == "#"* ]] && return 1
+
+    # ---- 单字符 0-9A-F: Windows 风格 ----
+    local up="${spec^^}"
+    if [ ${#up} -eq 1 ] && [[ "$up" =~ ^[0-9A-F]$ ]]; then
+        local code
+        if [ "$is_bg" -eq 1 ]; then
+            code=$(_win_bg_code "$up")
+        else
+            code=$(_win_fg_code "$up")
+        fi
+        [ -z "$code" ] && return 1
+        printf '%s' "$code"
+        return 0
     fi
-    if [ $# -gt 1 ]; then
-        err "参数数量错误用法: COLOR [背景][前景] 或 COLOR -def 恢复默认"
-        return 1
+
+    # ---- 十进制 0-255: 256 色 ----
+    if [[ "$spec" =~ ^[0-9]+$ ]] \
+       && [ "$spec" -ge 0 ] 2>/dev/null \
+       && [ "$spec" -le 255 ] 2>/dev/null; then
+        printf '%s;5;%d' "$prefix" "$spec"
+        return 0
     fi
-    local arg=$(echo "$1" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
-    if [ ${#arg} -ne 2 ]; then
-        err "无效颜色参数, 使用 COLOR -h 查看帮助"
-        return 1
-    fi
-    local bg_char=$(echo "$arg" | cut -c1)
-    local fg_char=$(echo "$arg" | cut -c2)
-    case $bg_char in
-        0) BG=40;;   1) BG=44;;   2) BG=42;;   3) BG=46;;
-        4) BG=41;;   5) BG=45;;   6) BG=43;;   7) BG=47;;
-        8) BG=100;;  9) BG=104;;  A) BG=102;;  B) BG=106;;
-        C) BG=101;;  D) BG=105;;  E) BG=103;;  F) BG=107;;
-        *) err "无效背景颜色代码 '$bg_char', 使用 COLOR -h 查看帮助"; return 1;;
-    esac
-    case $fg_char in
-        0) FG=30;;   1) FG=34;;   2) FG=32;;   3) FG=36;;
-        4) FG=31;;   5) FG=35;;   6) FG=33;;   7) FG=37;;
-        8) FG=90;;   9) FG=94;;   A) FG=92;;   B) FG=96;;
-        C) FG=91;;   D) FG=95;;   E) FG=93;;   F) FG=97;;
-        *) err "无效前景颜色代码 '$fg_char', 使用 COLOR -h 查看帮助"; return 1;;
-    esac
-    cecho "颜色已设置为背景[$bg_char]前景[$fg_char]"
-    save_config
+
+    return 1
 }
+
+cmd_color() {
+    # ---------- 帮助 / 无参数 ----------
+    if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << "EOF"
+//cecho -b "设置控制台默认前景和背景色"
+//cecho -b "用法:"
+  COLOR [BG][FG]          Windows 两位颜色代码
+  COLOR [FG]              Windows 单字符, 仅设置前景色
+  COLOR -c  <spec>        设置前景色
+  COLOR -cb <spec>        设置背景色
+  COLOR -def              恢复默认颜色
+  COLOR -h, --help        显示此帮助
+
+//cecho -b "<spec> 支持的格式:"
+  #RRGGBB                 十六进制真彩色 (不支持 alpha 透明通道)
+  0-255                   256 色 (十进制索引)
+  0-9A-F                  单字符 Windows 风格代码
+
+//cecho -b "颜色代码 (Windows 风格, 两个字符):"
+   0 = 黑色       8 = 灰色
+   1 = 蓝色       9 = 淡蓝
+   2 = 绿色       A = 淡绿
+   3 = 青色       B = 淡青
+   4 = 红色       C = 淡红
+   5 = 紫色       D = 淡紫
+   6 = 黄色       E = 淡黄
+   7 = 白色       F = 亮白
+EOF
+        return 0
+    fi
+
+    # ---------- -def: 恢复默认 (必须单独使用) ----------
+    if [ "$1" = "-def" ]; then
+        if [ $# -gt 1 ]; then
+            err "-def 不能与其他参数同时使用"
+            return 1
+        fi
+        BG=40; FG=97; save_config
+        cecho "颜色已重置为默认值"
+        return 0
+    fi
+
+    # ---------- 新语法: 以 - 开头, 循环解析 -c / -cb ----------
+    if [[ "$1" == -* ]]; then
+        local have_c=0 have_cb=0
+        local fg_spec="" bg_spec=""
+
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -c)
+                    if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                        err "选项 -c 缺少颜色参数"
+                        return 1
+                    fi
+                    fg_spec="$2"; have_c=1; shift 2 ;;
+                -cb)
+                    if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                        err "选项 -cb 缺少颜色参数"
+                        return 1
+                    fi
+                    bg_spec="$2"; have_cb=1; shift 2 ;;
+                -def)
+                    err "-def 不能与其他参数混用"
+                    return 1 ;;
+                *)
+                    err "未知参数: $1, 使用 COLOR -h 查看帮助"
+                    return 1 ;;
+            esac
+        done
+
+        # 全部校验通过后再应用, 避免"前一个生效、后一个失败"的半成品状态
+        local fg_code="" bg_code=""
+        if [ $have_c -eq 1 ]; then
+            if ! fg_code=$(_parse_color_spec "$fg_spec" 0); then
+                err "无效前景色: $fg_spec (支持 #RRGGBB / 0-255 / 0-9A-F)"
+                return 1
+            fi
+        fi
+        if [ $have_cb -eq 1 ]; then
+            if ! bg_code=$(_parse_color_spec "$bg_spec" 1); then
+                err "无效背景色: $bg_spec (支持 #RRGGBB / 0-255 / 0-9A-F)"
+                return 1
+            fi
+        fi
+
+        [ $have_c  -eq 1 ] && FG="$fg_code"
+        [ $have_cb -eq 1 ] && BG="$bg_code"
+        save_config
+
+        [ $have_c  -eq 1 ] && cecho "前景色已设置为: $fg_spec"
+        [ $have_cb -eq 1 ] && cecho "背景色已设置为: $bg_spec"
+        return 0
+    fi
+
+    # ---------- 旧语法: Windows 风格 (无 - 前缀) ----------
+    if [ $# -gt 1 ]; then
+        err "参数数量错误, 用法: COLOR [BG][FG] 或 COLOR -c <spec> [-cb <spec>]"
+        return 1
+    fi
+
+    local arg="${1^^}"
+    arg="${arg// /}"
+
+    # 单字符: 仅设置前景
+    if [ ${#arg} -eq 1 ]; then
+        if ! [[ "$arg" =~ ^[0-9A-F]$ ]]; then
+            err "无效前景颜色代码 '$arg', 使用 COLOR -h 查看帮助"
+            return 1
+        fi
+        FG=$(_win_fg_code "$arg")
+        cecho "前景色已设置为 [$arg]"
+        save_config
+        return 0
+    fi
+
+    # 两字符: BG + FG
+    if [ ${#arg} -eq 2 ]; then
+        local bg_char="${arg:0:1}"
+        local fg_char="${arg:1:1}"
+        if ! [[ "$bg_char" =~ ^[0-9A-F]$ ]]; then
+            err "无效背景颜色代码 '$bg_char', 使用 COLOR -h 查看帮助"
+            return 1
+        fi
+        if ! [[ "$fg_char" =~ ^[0-9A-F]$ ]]; then
+            err "无效前景颜色代码 '$fg_char', 使用 COLOR -h 查看帮助"
+            return 1
+        fi
+        BG=$(_win_bg_code "$bg_char")
+        FG=$(_win_fg_code "$fg_char")
+        cecho "颜色已设置为背景[$bg_char]前景[$fg_char]"
+        save_config
+        return 0
+    fi
+
+    err "无效颜色参数, 使用 COLOR -h 查看帮助"
+    return 1
+}
+
 # 临时目录
 cmd_tmpdir() {
     if [ $# -eq 0 ]; then
@@ -977,10 +1193,10 @@ cmd_tmpdir() {
     case "$1" in
         -h|--help)
             cecho -b "用法: TMPDIR [参数]"
-            cecho "  -h, --help     显示此帮助"
-            cecho "  -c, --clean    清除临时目录中的所有内容"
-            cecho "  -s, --set <目录> 设置临时目录"
-            cecho "  无参数          显示当前临时目录"
+            cecho "  -h, --help        显示此帮助"
+            cecho "  -c, --clean       清除临时目录中的所有内容"
+            cecho "  -s, --set <目录>  设置临时目录"
+            cecho "  无参数            显示当前临时目录"
             return 0
             ;;
         -c|--clean)
@@ -991,8 +1207,15 @@ cmd_tmpdir() {
             if ! confirm "确定要清除临时目录 $TMP_DIR 中的所有内容吗?"; then
                 return 0
             fi
-            # 删除目录下所有文件和子目录, 保留目录本身
-            if rm -rf "$TMP_DIR"/* 2>/dev/null; then
+            # 删除目录下所有文件和子目录(含隐藏文件), 保留目录本身
+            shopt -s dotglob nullglob
+            local _items=("$TMP_DIR"/*)
+            shopt -u dotglob nullglob
+            if [ ${#_items[@]} -eq 0 ]; then
+                cecho "临时目录已清空"
+                return 0
+            fi
+            if rm -rf "${_items[@]}" 2>/dev/null; then
                 cecho "临时目录已清空"
             else
                 err "清除临时目录失败, 请检查权限"
@@ -1030,47 +1253,110 @@ cmd_tmpdir() {
 }
 
 cmd_config() {
+    # 路径显示(超过 40 字符时省略前面部分, 保留结尾)
+    local _cfg_disp="$COLOR_CONFIG_FILE"
+    if [ ${#_cfg_disp} -gt 40 ]; then
+        _cfg_disp="...${_cfg_disp: -37}"
+    fi
+
+    # ---------- 无参数: 人性化显示当前配置 ----------
     if [ $# -eq 0 ]; then
         if [ -f "$COLOR_CONFIG_FILE" ]; then
-            cecho -b "当前配置($COLOR_CONFIG_FILE): "
-            cat "$COLOR_CONFIG_FILE" | while IFS= read -r line; do
-                cecho "$line"
-            done
+            cecho -b "当前配置 ($_cfg_disp):"
         else
-            cecho "配置文件不存在, 使用默认配置"
+            cecho -b "当前配置 (配置文件不存在, 使用默认值):"
         fi
+        cecho "$CMD_delimiter"
+        cecho "  背景色 (BG)                  = $BG"
+        cecho "  前景色 (FG)                  = $FG"
+        cecho "  自定义标题 (TITLE)           = ${CUSTOM_TITLE:-(默认)}"
+        cecho "  CLS 默认显示标题 (CLS_TITLE) = $([ "${CLS_TITLE:-1}" = "1" ] && echo "启用" || echo "禁用")"
+        cecho "  临时目录 (TMPDIR)            = $TMP_DIR"
+        cecho "  关注预发布 (UPDATE_PRE)      = $([ "${UPDATE_PRE:-0}" = "1" ] && echo "启用 (同时比较正式版与预发布版)" || echo "禁用 (仅比较正式版)")"
         return 0
     fi
 
     case "$1" in
         -h|--help)
-            cecho -b "用法: CONFIG [参数]"
-            cecho "  -h, --help     显示此帮助"
-            cecho "  -c, --clean    清除配置文件并重置为默认值(文件将被删除)"
-            cecho "  -r, --reset    重置所有配置为默认值(覆盖配置文件)"
-            cecho "  无参数          显示当前配置内容"
+            cecho -b "用法: CONFIG [参数|子命令]"
+            ccat << "EOF"
+//cecho -b "参数:"
+  -h, --help     显示此帮助
+  -v, --vanilla  查看配置文件源内容(原始格式)
+  无参数         人性化显示当前配置
+  -c, --clean    清除配置文件并重置为默认值(文件将被删除)
+  -r, --reset    重置所有配置为默认值(覆盖配置文件)
+
+//cecho -b "子命令(直达对应命令):"
+  color [参数]   等价于 COLOR [参数]
+  title [参数]   等价于 TITLE [参数]
+  clsd [参数]    等价于 CLSD [参数]
+  tmpdir [参数]  等价于 TMPDIR [参数]
+  pre <0|1>      等价于 UPDATE --pre <0|1>
+
+//cecho -b "配置项与修改命令对照:"
+  BG / FG        COLOR [背景][前景]
+  TITLE          TITLE <文本>            (-def 恢复默认)
+  CLS_TITLE      CLSD -n (禁用) / CLSD -r (启用)
+  TMPDIR         TMPDIR -s <目录>
+  UPDATE_PRE     UPDATE --pre 0 (仅正式) / UPDATE --pre 1 (含预发布)
+详细用法见各个命令
+EOF
             return 0
             ;;
+        -v|--vanilla)
+            if [ ! -f "$COLOR_CONFIG_FILE" ]; then
+                err "配置文件不存在: $_cfg_disp"
+                return 1
+            fi
+            cecho -b "配置文件源内容 ($_cfg_disp):"
+            cecho "$CMD_delimiter"
+            cat "$COLOR_CONFIG_FILE" | while IFS= read -r line; do
+                cecho "$line"
+            done
+            return 0
+            ;;
+        color)
+            shift
+            cmd_color "$@"
+            ;;
+        title)
+            shift
+            cmd_title "$@"
+            ;;
+        clsd)
+            shift
+            cmd_clsd "$@"
+            ;;
+        tmpdir)
+            shift
+            cmd_tmpdir "$@"
+            ;;
+        pre)
+            shift
+            cmd_update --pre "$@"
+            ;;
         -c|--clean)
-            if confirm "确定要清除配置文件 ($COLOR_CONFIG_FILE) 并重置配置为默认值吗?"; then
+            if confirm "确定要清除配置文件 ($_cfg_disp) 并重置配置为默认值吗?"; then
                 rm -f "$COLOR_CONFIG_FILE" 2>/dev/null
                 BG=40; FG=97; CLS_TITLE=1; CUSTOM_TITLE=""
+                UPDATE_PRE=0
                 if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null; then
                     TMP_DIR="$SCRIPT_DIR/tmp"
                 else
                     TMP_DIR="/storage/emulated/0/tmp"
                     mkdir -p "$TMP_DIR" 2>/dev/null
                 fi
-                # 文件已删除, 内存中已重置, 但不保存(因为文件已删, 下次修改时会重新创建)
                 cecho "配置文件已清除, 配置已重置为默认值"
             else
-            echo ""
+                echo ""
             fi
             return 0
             ;;
         -r|--reset)
             if confirm "确定重置所有配置为默认值吗?"; then
                 BG=40; FG=97; CLS_TITLE=1; CUSTOM_TITLE=""
+                UPDATE_PRE=0
                 if mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null; then
                     TMP_DIR="$SCRIPT_DIR/tmp"
                 else
@@ -1091,13 +1377,13 @@ cmd_config() {
 
 # 资源加载
 cmd_resource() {
-        if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]] || [ "$#" -eq 0 ]; then
+        if [[ "$1" == "-h" || "$1" == "--help" || "$#" -eq 0 ]]; then
         cecho -b "用法: RESOURCE <子命令> [参数]"
         cecho "  ls                    列出所有可用的资源文件"
         cecho "  laod                  列出当前已加载的资源函数"
         cecho "  del                   卸载全部已加载资源"
         cecho "  del <N>/<函数名>      卸载最旧的 N 个(正整数)/卸载指定函数"
-        cecho "  -h, --help, help      显示此帮助"
+        cecho "  -h, --help            显示此帮助"
         return 0
     fi
 
@@ -1256,11 +1542,13 @@ cmd_history() {
 # 自定义标题
 cmd_title() {
         if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        echo "用法: TITLE [-def]/[字符串]"
-        echo "  TITLE             显示本帮助"
-        echo "  TITLE -def        恢复控制台标题为默认值"
-        echo "  TITLE <字符串>    设置自定义标题"
-        echo "示例: TITLE cmd.exe [版本 16.0]"
+  ccat << "EOF"
+//cecho -b " TITLE [-def]/[字符串]"
+  TITLE             显示本帮助
+  TITLE -def        恢复控制台标题为默认值
+  TITLE <字符串>    设置自定义标题
+  示例: TITLE cmd.exe [版本 16.0]
+EOF
         return 0
     fi
     if [ "$1" = "-def" ]; then
@@ -1318,7 +1606,7 @@ cmd_clsd() {
     cecho "CLS 默认标题显示已设置为: $([ $CLS_TITLE -eq 1 ] && echo "启用" || echo "禁用")"
 }
 # ---------- 命令实现函数 ----------
-cmd_help() {
+QAQ_cmd_help() {
 ccat << EOF
 $CMD_delimiter
 //cecho -b "文件和目录操作"
@@ -1347,7 +1635,7 @@ $CMD_delimiter
   CODEWC [参数] [文件...]       统计代码的行数、单词数、字符数(BETA)
   AWK [参数] '程序' [文件...]   执行 awk 程序(系统)
   GREP [参数] 模式 [文件...]    在文件中搜索(系统)
-  CGREP <关键词/正则表达式> <文件1> [文件2...]
+  CGREP <关键词|正则表达式> <文件1> [文件2...]
   --在文件中搜索字符串/正则表达式
   SED [参数] '脚本' [文件...]   流编辑器(系统)
   LN [-s] <源> <目标>           创建(软)链接
@@ -1355,7 +1643,7 @@ $CMD_delimiter
   TYPE [文件]                   查看文本文件
   CAT [参数] <1> [2...]         更高级的查看文本文件(系统)
   MORE < 文件                   分页查看文本文件
-  ZIP <输出文件> <源文件/目录> [-f] [-l]
+  ZIP <输出文件> <源文件|目录> [-f] [-l]
   --创建 ZIP 压缩包(支持目录递归)
   UNZIP <压缩包> [-d 目标]      解压 ZIP 压缩包
 //cecho -c 31 -b "需要root权限:"
@@ -1364,9 +1652,9 @@ $CMD_delimiter
   MOUNT <设备> <挂载点> [参数] 挂载文件系统
   UMOUNT <设备或挂载点>        卸载文件系统
 
-//cecho -b "系统信息"
+//cecho -b "系统"
   DATE [参数]         显示/设置时钟
-  CAL [模式/年] [月]  显示日历
+  CAL [模式|年] [月]  显示日历
   CLOCK               显示实时时间(每0.1s刷新)
   FREE                显示当前内存使用
   DF [参数]           显示磁盘使用情况
@@ -1384,40 +1672,48 @@ $CMD_delimiter
   MONITOR             实时显示时间、内存和温度(约每2s刷新)
   CPUMONITOR          实时显示每个CPU核心的当前频率
   WHOAMI              显示当前用户UID和权限
-  ID [参数]           查看当前用户 UID/GID/组
+  ID [参数]           查看当前用户UID/GID/组
   WHICH               查找命令路径
   DISKC [参数]        检测各可读(写)挂载点的读写速度
   DISKT [参数]        检测当前存储设备的顺序和随机读写速度
-  PWD [-L|P]          显示当前工作目录
+  PATH [set (值)]     PATH段管理
+  HOME [set (值)]     显示(set以外的任何情况)或者设置HOME目录
+  PWD [-L|-P]         显示当前工作目录
   SDIR                显示脚本所在目录
   SELF                显示当前脚本路径
 
 //cecho -b "网络"
   NETSTAT [参数]             网络连接统计
   HOSTNAME [参数]            显示主机名
-  DNS [参数] [IPV4/域名]     相互转换IPV4或域名
+  NETINFO                    显示当前设备的一些有用网络信息
+  DNS [参数] [IPV4|域名]     相互转换IPV4或域名
   NETNEIG                    扫描局域网下的主机
   FTP [参数]                 FTP功能
+  GIT [--sys|--sim] [参数]   GITHUB功能
   PING [参数]                测试网络连接
   PING6 [参数]               (=PING -6)
   SCAN [参数]                扫描网络中的存活主机
   PORTSCAN [参数]            扫描指定地址的存活端口
   DOWNLOAD <URL> <本地路径>  下载网络文件到本地
-  SPEEDTEST [-u] [-t]        网络测速(默认 Cloudflare 10MB)
+  SPEEDTEST [-u|-t]          网络测速(默认 Cloudflare 10MB)
   WGET <参数...>             网络下载工具(直接透传)
   CURL <参数...>             网络传输工具(直接透传)
 
 //cecho -b "编解码与校验"
-  B64 -d <字符串>/[-d] -f <文件>        Base64编码/解码
-  SHA1 [选项]                           计算/校验SHA1
-  SHA256 [选项]                         计算/校验SHA256
-  SHA512 [选项]                         计算/校验SHA512
-  MD5 <文件>                            计算文件的MD5
-  CRC32 <文件>                          计算文件的CRC32(cksum)
+  B64 [参数]                            Base64编码/解码
+  B32 [参数]                            Base32编码/解码
+  SHA1 [参数]                           计算/校验SHA1
+  SHA224 [参数]                         计算/校验SHA224
+  SHA256 [参数]                         计算/校验SHA256
+  SHA384 [参数]                         计算/校验SHA384
+  SHA512 [参数]                         计算/校验SHA512
+  MD5 [参数]                            计算/校验MD5
+  B2SUM [参数]                          计算/校验BLAKE2b-512
+  CRC32 [参数]                          计算/校验CRC32(cksum)
   DIFF [参数] <1> <2>                   比较两个文件/目录的差异
   ZIPDUFF [参数] <源> <新>              比较两个ZIP文件的差异
-  JSON -w/[参数] <目标>                 检验JSON有效性
-  PSD [-n 长度] [-C 数量] [选项...]     生成符合要求的随机密码
+  JSON -w|[参数] <目标>                 检验JSON有效性
+  PSD [-n 长度] [-C 数量] [参数...]     生成符合要求的随机密码
   RAND [长度]                           生成随机数(默认四位数)
 
 //cecho -b "杂项"
@@ -1428,37 +1724,37 @@ $CMD_delimiter
   YES [内容]                 刷屏某一内容直至按下Ctrl+C
   DUMP <目标> [输出]         扁平化文件夹结构(所有内容导出到TXT)
   HACK/HACK2 [参数] <目标>   穷举可打印字符直到找到目标(线性/二分搜索)
-  AWKC <表达式>/<无参数进入交互>           AWK计算器
-  BC [-s 精度] <表达式>/<无参数进入交互>   任意精度计算器
-  TIMER [秒数]/[时间戳]         倒计时/闹钟
-  SLEEP <秒数>                  睡眠指定时间
+  AWKC <表达式>|<无参数进入交互>           AWK计算器
+  BC [-s 精度] <表达式>|<无参数进入交互>   任意精度计算器
+  TIMER [秒数]|[时间戳]                 倒计时/闹钟
+  SLEEP <秒数>                          睡眠指定时间
   WATCH <秒数> <命令> [参数]            每隔指定时间清除屏幕并运行命令
   REPEAT <次数> <命令> [参数]           重复执行指定次数命令
   TIME <命令> [参数]                    测量命令执行耗时
   TIMEOUT [参数] <秒数> <命令> [参数]   在指定时间后终止命令
 //cecho -b "ACMD"
-  CLS/CLEAR                     清除屏幕(-n无标题/-r/-y有)
-  CLSD/CLEARD                   设置清除屏幕默认行为
-  COLOR [-def]/[BF]             设置控制台颜色
-  TITLE [-def]/[文本]           设置控制台标题
+  CLS/CLEAR [-n|-r|-y]          清除屏幕
+  CLSD [-n|-r|-y]               设置清除屏幕默认行为
+  COLOR [-def]|[BF]             设置控制台颜色
+  TITLE [-def]|[文本]           设置控制台标题
   TMPDIR [参数]                 临时目录
   RESOURCE [参数]               资源目录
   HISTORY [参数]                历史命令
-  ETC/CONFIG [参数]             配置
-  UPDATE                        检查更新
+  ETC/CONFIG [参数|子命令]      配置
+  UPDATE [--pre <0|1>]          检查更新
   INFO                          显示脚本自身信息
   HELP <OR> /?                  此命令列表
   EXIT/EXIT15                   正常退出
   EXITK/KILLSELF                杀掉自己以退出
 //cecho -c "#C0C0C0" "  #按下Ctrl+C退出命令, 未说明时退出脚本"
   ULIMIT [参数] [限制值]        限制SHELL
-  SH [-M] <脚本路径> [参数]          执行外部 SHELL 脚本
-  C/EVAL [-M] <系统命令> [参数]      执行任意系统命令(无参数系统交互)
-  BASH [-M] <参数>                   调用系统 BASH 程序(无参数交互)
+  SH/RUN [-M|-S] <路径> [参数]  执行外部脚本
+  C [-M] <系统命令> [参数]      执行任意系统命令(无参数系统交互)
+  CC                            执行多条内置命令
   FUN [参数] [函数体]           临时定义函数(重启后失效,同名覆盖)
   ADB <参数>                    执行 ADB 命令
   RUNNING <包名>                启动应用程序
-  KILL [-9/-15/-2] <PID>        终止指定进程
+  KILL [-9|-15|-2|-t] <PID>     终止指定进程
 $CMD_delimiter
 EOF
 }
@@ -1467,8 +1763,8 @@ cmd_pwd() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
         cecho -b "用法: PWD [-L|-P]"
         cecho "显示当前工作目录"
-        cecho "  -L    逻辑路径(跟随符号链接, 默认)"
-        cecho "  -P    物理路径(解析符号链接)"
+        cecho "  -L          逻辑路径(跟随符号链接, 默认)"
+        cecho "  -P          物理路径(解析符号链接)"
         cecho "  -h, --help  显示此帮助"
         return 0
     fi
@@ -1557,15 +1853,17 @@ cmd_whoami() {
 
 cmd_id() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        cecho -b "用法: ID [参数]"
-        cecho "显示当前用户的 UID、GID 和所属组"
-        cecho -b "参数:"
-        cecho "  -u          只显示 UID"
-        cecho "  -g          只显示主 GID"
-        cecho "  -G          显示所有 GID"
-        cecho "  -n          显示名称而不是数字(与 -u/-g/-G 搭配)"
-        cecho "  -r          显示真实 ID 而非有效 ID"
-        cecho "  -h, --help  显示此帮助"
+    ccat << "EOF"
+//cecho -b "用法: ID [参数]"
+显示当前用户的 UID、GID 和所属组
+//cecho -b "参数:"
+-u          只显示 UID
+-g          只显示主 GID
+-G          显示所有 GID
+-n          显示名称而不是数字(与 -u/-g/-G 搭配)
+-r          显示真实 ID 而非有效 ID
+-h, --help  显示此帮助
+EOF
         return 0
     fi
 
@@ -1581,30 +1879,188 @@ cmd_id() {
     fi
 }
 
+# ---------- 人性化时间公共函数 ----------
+# 占位符:
+#   YYYY YY MM DD HH hh mm ss AA aa
+#   mmm       毫秒(3位总值)       = 小数秒前3位
+#   uuuuuu    微秒(6位总值)       = 小数秒前6位
+#   uuu       微秒分量(3位)       = 小数秒第4-6位
+#   NNNNNNNNN 纳秒(9位总值)       = 全部小数秒
+#   NN        纳秒分量(3位)       = 小数秒第7-9位
+#   TZ        时区偏移            = 形如 +08:00
+# 替换顺序说明:
+#   1) TZ 最先替换为 @@TZ@@%z@@TZ_END@@, 后续只清理标记
+#   2) 小数秒"长占位符"先于"短占位符"
+#   3) mm(分) 必须在 mmm(毫秒) 之后替换
+_human_date_fmt() {
+    local fmt="$1"
+
+    # ---- 1) 时区: TZ -> @@TZ@@%z@@TZ_END@@ (冒号由后处理补) ----
+    fmt="${fmt//TZ/@@TZ@@%z@@TZ_END@@}"
+
+    # ---- 2) 日期 ----
+    fmt="${fmt//YYYY/%Y}"
+    fmt="${fmt//YY/%y}"
+    fmt="${fmt//MM/%m}"
+    fmt="${fmt//DD/%d}"
+    fmt="${fmt//HH/%H}"
+    fmt="${fmt//hh/%I}"
+
+    # ---- 3) 小数秒(长占位符优先) ----
+    fmt="${fmt//NNNNNNNNN/@NS9@}"   # 纳秒总值
+    fmt="${fmt//uuuuuu/@US6@}"      # 微秒总值
+    fmt="${fmt//mmm/@MS3@}"         # 毫秒
+    fmt="${fmt//uuu/@US3@}"         # 微秒分量
+    fmt="${fmt//NN/@NS3@}"          # 纳秒分量
+
+    # ---- 4) 分/秒/星期 ----
+    fmt="${fmt//mm/%M}"
+    fmt="${fmt//ss/%S}"
+    fmt="${fmt//AA/%A}"
+    fmt="${fmt//aa/%a}"
+
+    printf '%s' "$fmt"
+}
+
+# 把 @MS3@/@US6@/@US3@/@NS9@/@NS3@ 替换成小数秒对应位
+# 参数: $1=字符串, $2=9位纳秒(空/非法则视为 000000000)
+_human_date_fix_subsec() {
+    local out="$1" ns="${2:-}"
+    if [[ "$out" != *"@MS3@"* && "$out" != *"@US6@"* && "$out" != *"@US3@"* \
+          && "$out" != *"@NS9@"* && "$out" != *"@NS3@"* ]]; then
+        printf '%s' "$out"
+        return
+    fi
+    if ! [[ "$ns" =~ ^[0-9]+$ ]]; then
+        ns="000000000"
+    fi
+    while [ ${#ns} -lt 9 ]; do ns="0$ns"; done
+    ns="${ns:0:9}"
+
+    out="${out//@MS3@/${ns:0:3}}"   # 毫秒(3)
+    out="${out//@US6@/${ns:0:6}}"   # 微秒(6)
+    out="${out//@US3@/${ns:3:3}}"   # 微秒分量(3)
+    out="${out//@NS9@/${ns:0:9}}"   # 纳秒(9)
+    out="${out//@NS3@/${ns:6:9}}"   # 纳秒分量(3)
+    printf '%s' "$out"
+}
+
+# 把 @@TZ@@+0800@@TZ_END@@ 收尾为 +08:00
+_human_date_fix_tz() {
+    local out="$1"
+
+    # 正常形式: @@TZ@@+0800@@TZ_END@@ -> +08:00
+    while [[ "$out" =~ @@TZ@@([+-])([0-9]{2})([0-9]{2})@@TZ_END@@ ]]; do
+        out="${out//${BASH_REMATCH[0]}/${BASH_REMATCH[1]}${BASH_REMATCH[2]}:${BASH_REMATCH[3]}}"
+    done
+
+    # 极端情况: date 不支持 %z, 降级为 +00:00
+    out="${out//@@TZ@@%z@@TZ_END@@/+00:00}"
+    out="${out//@@TZ@@@@TZ_END@@/+00:00}"
+
+    # 清理残留标记
+    out="${out//@@TZ@@/}"
+    out="${out//@@TZ_END@@/}"
+    printf '%s' "$out"
+}
+
+# 按人性化格式输出时间
+# 参数: $1=人性化格式串, $2=utc(0/1), $3=参考文件(可选, 显示其修改时间)
+_human_date_output() {
+    local human_fmt="$1" utc="$2" ref_file="$3"
+    local fmt
+    fmt=$(_human_date_fmt "$human_fmt")
+
+    local out
+    if [ -n "$ref_file" ]; then
+        if [ "$utc" -eq 1 ]; then
+            out=$($_DATE -u -r "$ref_file" "+$fmt" 2>/dev/null)
+        else
+            out=$($_DATE -r "$ref_file" "+$fmt" 2>/dev/null)
+        fi
+    else
+        if [ "$utc" -eq 1 ]; then
+            out=$($_DATE -u "+$fmt" 2>/dev/null)
+        else
+            out=$($_DATE "+$fmt" 2>/dev/null)
+        fi
+    fi
+
+    # 需要拆分小数秒时, 单独取 9 位纳秒
+    if [[ "$fmt" == *"@MS3@"* || "$fmt" == *"@US6@"* || "$fmt" == *"@US3@"* \
+          || "$fmt" == *"@NS9@"* || "$fmt" == *"@NS3@"* ]]; then
+        local ns=""
+        if [ -n "$ref_file" ]; then
+            if [ "$utc" -eq 1 ]; then
+                ns=$($_DATE -u -r "$ref_file" +%N 2>/dev/null)
+            else
+                ns=$($_DATE -r "$ref_file" +%N 2>/dev/null)
+            fi
+        else
+            if [ "$utc" -eq 1 ]; then
+                ns=$($_DATE -u +%N 2>/dev/null)
+            else
+                ns=$($_DATE +%N 2>/dev/null)
+            fi
+        fi
+        out=$(_human_date_fix_subsec "$out" "$ns")
+    fi
+
+    # 时区收尾
+    if [[ "$out" == *"@@TZ"* ]]; then
+        out=$(_human_date_fix_tz "$out")
+    fi
+
+    printf '%s' "$out"
+}
+
+# 兼容旧名
+_human_date_now() {
+    _human_date_output "$1" 0 ""
+}
+
 cmd_date() {
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        cecho -b "用法: DATE [参数]"
-        cecho "  (无参数)             默认格式: YYYY-MM-DD HH:MM:SS (AA)"
-        cecho "  -f <格式>            按 date 格式串输出(如 %Y-%m-%d)"
-        cecho "  -fp <人性化格式>     按指定格式输出, 人性化格式"
-        cecho "  -u                   使用 UTC 时间"
-        cecho "  -v                   输出系统 date 默认格式(原始)"
-        cecho "  -r <文件>            显示文件的修改时间"
-        cecho "  -s <时间字符串>      设置系统时间"
-        cecho "  -h, --help           显示此帮助"
-        cecho -b "人性化格式(-fp)占位符:"
-        cecho "  YYYY=年  YY=两位年  MM=月  DD=日"
-        cecho "  HH=24时  hh=12时  mm=分  ss=秒"
-        cecho "  AA=星期全称  aa=星期缩写"
+        ccat << "EOF"
+//cecho -b "用法: DATE [参数]"
+  (无参数)             默认格式: YYYY-MM-DD HH:MM:SS (AA)
+  -f <格式>            按 date 格式串输出(如 %Y-%m-%d)
+  -fp <人性化格式>     按指定格式输出, 人性化格式
+  -u                   使用 UTC 时间
+  -v                   输出系统 date 默认格式(原始)
+                       可与 -n 同时使用, 此时输出原始格式的网络时间
+  -r <文件>            显示文件的修改时间
+  -s <时间字符串>      设置系统时间
+  -n [URL...]          从互联网获取时间(默认: www.ntsc.ac.cn)
+                       可跟多个 URL, 按顺序依次尝试并显示
+  -sn [URL]            从互联网获取时间并立即设置其为系统时间
+                       默认: www.ntsc.ac.cn, 只允许一个 URL
+  -h, --help           显示此帮助
+//cecho -b "人性化格式(-fp)占位符:"
+  YYYY=年  YY=两位年  MM=月  DD=日
+  HH=24时  hh=12时  mm=分  ss=秒
+  mmm=毫秒(3位总值)        如 802
+  uuuuuu=微秒(6位总值)     如 802598
+  uuu=微秒分量(3位)        如 598
+  NNNNNNNNN=纳秒(9位总值)  如 802598399
+  NN=纳秒分量(3位)         如 399
+  AA=星期全称  aa=星期缩写
+  TZ=时区偏移              如 +08:00
+EOF
         return 0
     fi
 
     local fmt="%Y-%m-%d %H:%M:%S (%A)"
+    local human_fmt=""          # -fp 时的原始人性化格式串(非空表示使用 -fp)
     local fmt_set=0
     local utc=0
     local raw=0
     local set_time=""
     local ref_file=""
+    local use_net=0
+    local set_net=0
+    local set_net_url=""
+    local -a net_urls=()
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1613,13 +2069,14 @@ cmd_date() {
                     err "参数 -f 需要格式串"
                     return 1
                 fi
-                fmt="$2"; fmt_set=1; shift 2 ;;
+                fmt="$2"; fmt_set=1; human_fmt=""; shift 2 ;;
             -fp)
                 if [ $# -lt 2 ]; then
                     err "参数 -fp 需要人性化格式串"
                     return 1
                 fi
-                fmt=$(_date_human_fmt "$2")
+                human_fmt="$2"
+                fmt=$(_human_date_fmt "$2")
                 fmt_set=1; shift 2 ;;
             -u) utc=1; shift ;;
             -v) raw=1; shift ;;
@@ -1635,6 +2092,30 @@ cmd_date() {
                     return 1
                 fi
                 set_time="$2"; shift 2 ;;
+            -sn)
+                set_net=1; shift
+                if [ $# -gt 0 ]; then
+                    case "$1" in
+                        -*) ;;
+                        *) set_net_url="$1"; shift ;;
+                    esac
+                fi
+                if [ $# -gt 0 ]; then
+                    case "$1" in
+                        -*) ;;
+                        *) err "-sn 只允许指定一个 URL"; return 1 ;;
+                    esac
+                fi
+                ;;
+            -n)
+                use_net=1; shift
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        -*) break ;;
+                    esac
+                    net_urls+=("$1"); shift
+                done
+                ;;
             *)
                 err "未知参数: $1, 使用 DATE -h 查看帮助"
                 return 1 ;;
@@ -1642,17 +2123,77 @@ cmd_date() {
     done
 
     # ---------- 互斥校验 ----------
-    if [ -n "$set_time" ] && { [ $utc -eq 1 ] || [ $fmt_set -eq 1 ] || [ $raw -eq 1 ] || [ -n "$ref_file" ]; }; then
-        err "-s 不能与 -f/-fp/-u/-v/-r 同时使用"
+    if [ -n "$set_time" ] && { [ $utc -eq 1 ] || [ $fmt_set -eq 1 ] || [ $raw -eq 1 ] || [ -n "$ref_file" ] || [ $use_net -eq 1 ] || [ $set_net -eq 1 ]; }; then
+        err "-s 不能与 -f/-fp/-u/-v/-r/-n/-sn 同时使用"
         return 1
     fi
-    if [ -n "$ref_file" ] && [ $raw -eq 1 ]; then
-        err "-r 不能与 -v 同时使用"
+    if [ -n "$ref_file" ] && { [ $raw -eq 1 ] || [ $use_net -eq 1 ] || [ $set_net -eq 1 ]; }; then
+        err "-r 不能与 -v/-n/-sn 同时使用"
         return 1
     fi
-    if [ $raw -eq 1 ] && { [ $utc -eq 1 ] || [ $fmt_set -eq 1 ]; }; then
-        err "-v 不能与 -f/-fp/-u 同时使用"
+    if [ $raw -eq 1 ] && { [ $utc -eq 1 ] || [ $fmt_set -eq 1 ] || [ $set_net -eq 1 ]; }; then
+        err "-v 不能与 -f/-fp/-u/-sn 同时使用"
         return 1
+    fi
+    if [ $set_net -eq 1 ] && { [ $use_net -eq 1 ] || [ $utc -eq 1 ] || [ $fmt_set -eq 1 ]; }; then
+        err "-sn 不能与 -n/-f/-fp/-u 同时使用"
+        return 1
+    fi
+
+    # ---------- 互联网时间设置系统时间 ----------
+    if [ $set_net -eq 1 ]; then
+        [ -z "$set_net_url" ] && set_net_url="www.ntsc.ac.cn"
+
+        local ts
+        if ! ts=$(_nettime_epoch "$set_net_url"); then
+            err "$set_net_url: 获取互联网时间失败"
+            return 1
+        fi
+
+        if $_DATE -s "@$ts" 2>/dev/null; then
+            cecho "已根据 $set_net_url 设置系统时间为: $($_DATE "+%Y-%m-%d %H:%M:%S")"
+            return 0
+        else
+            err "设置系统时间失败"
+            return 1
+        fi
+    fi
+
+    # ---------- 互联网时间显示 ----------
+    if [ $use_net -eq 1 ]; then
+        if [ $raw -eq 1 ]; then
+            fmt=""
+        else
+            # HTTP Date 响应头仅到秒, 亚秒占位符会得到误导性的 0
+            if [ -n "$human_fmt" ]; then
+                if [[ "$fmt" == *"@MS3@"* || "$fmt" == *"@US6@"* || "$fmt" == *"@US3@"* \
+                      || "$fmt" == *"@NS9@"* || "$fmt" == *"@NS3@"* ]]; then
+                    err "HTTP Date 响应头最多精确到秒"
+                    return 1
+                fi
+            else
+                if [[ "$fmt" =~ %[0-9]*N ]]; then
+                    err "HTTP Date 响应头最多精确到秒"
+                    return 1
+                fi
+            fi
+        fi
+
+        if [ ${#net_urls[@]} -eq 0 ]; then
+            net_urls=("www.ntsc.ac.cn")
+        fi
+
+        local _ok=1
+        local _u _t
+        for _u in "${net_urls[@]}"; do
+            if _t=$(_nettime_fetch "$_u" "$fmt" "$utc"); then
+                cecho "$_u: $_t"
+                _ok=0
+            else
+                err "$_u: 获取失败"
+            fi
+        done
+        return $_ok
     fi
 
     # ---------- 设置系统时间 ----------
@@ -1676,10 +2217,14 @@ cmd_date() {
         fi
 
         local file_time
-        if [ $utc -eq 1 ]; then
-            file_time=$($_DATE -u -r "$ref_file" "+$fmt" 2>/dev/null)
+        if [ -n "$human_fmt" ]; then
+            file_time=$(_human_date_output "$human_fmt" "$utc" "$ref_file")
         else
-            file_time=$($_DATE -r "$ref_file" "+$fmt" 2>/dev/null)
+            if [ $utc -eq 1 ]; then
+                file_time=$($_DATE -u -r "$ref_file" "+$fmt" 2>/dev/null)
+            else
+                file_time=$($_DATE -r "$ref_file" "+$fmt" 2>/dev/null)
+            fi
         fi
 
         if [ -z "$file_time" ]; then
@@ -1701,26 +2246,76 @@ cmd_date() {
     fi
 
     # ---------- 正常显示 ----------
-    if [ $utc -eq 1 ]; then
-        cecho "$($_DATE -u "+$fmt" 2>/dev/null)"
+    if [ -n "$human_fmt" ]; then
+        cecho "$(_human_date_output "$human_fmt" "$utc" "")"
     else
-        cecho "$($_DATE "+$fmt" 2>/dev/null)"
+        if [ $utc -eq 1 ]; then
+            cecho "$($_DATE -u "+$fmt" 2>/dev/null)"
+        else
+            cecho "$($_DATE "+$fmt" 2>/dev/null)"
+        fi
     fi
 }
 
-# 人性化格式转 date 格式串
-_date_human_fmt() {
-    printf '%s' "$1" | sed \
-        -e 's/YYYY/%Y/g' \
-        -e 's/YY/%y/g' \
-        -e 's/MM/%m/g' \
-        -e 's/DD/%d/g' \
-        -e 's/HH/%H/g' \
-        -e 's/hh/%I/g' \
-        -e 's/mm/%M/g' \
-        -e 's/ss/%S/g' \
-        -e 's/AA/%A/g' \
-        -e 's/aa/%a/g'
+# 从 URL 的 HTTP 响应头 Date 字段提取 epoch 时间戳
+# 用法: _nettime_epoch <url>
+# 成功时 echo 秒级时间戳并返回 0, 失败返回 1
+_nettime_epoch() {
+    local url="$1"
+
+    case "$url" in
+        http://*|https://*) ;;
+        *) url="https://$url" ;;
+    esac
+
+    local hdr=""
+    local awk_date='/^[Dd][Aa][Tt][Ee]:/{sub(/^[Dd][Aa][Tt][Ee]:[ \t]*/,""); sub(/\r$/,""); print; exit}'
+
+    hdr=$(curl -sI --max-time 8 -L "$url" 2>/dev/null | awk "$awk_date")
+
+    if [ -z "$hdr" ]; then
+        hdr=$(curl -s --max-time 8 -L -o /dev/null -D - "$url" 2>/dev/null | awk "$awk_date")
+    fi
+
+    if [ -z "$hdr" ]; then
+        case "$url" in
+            https://*)
+                local u2="http://${url#https://}"
+                hdr=$(curl -sI --max-time 8 -L "$u2" 2>/dev/null | awk "$awk_date")
+                if [ -z "$hdr" ]; then
+                    hdr=$(curl -s --max-time 8 -L -o /dev/null -D - "$u2" 2>/dev/null | awk "$awk_date")
+                fi
+                ;;
+        esac
+    fi
+
+    [ -z "$hdr" ] && return 1
+
+    local ts
+    ts=$($_DATE -u -d "$hdr" "+%s" 2>/dev/null)
+    [ -z "$ts" ] && return 1
+    echo "$ts"
+}
+
+# 从 URL 获取时间并按格式输出
+# 用法: _nettime_fetch <url> <fmt> <utc(0/1)>
+#   fmt 为空时使用系统 date 默认格式(不带 +格式串)
+_nettime_fetch() {
+    local url="$1" fmt="$2" utc="$3"
+    local ts
+    ts=$(_nettime_epoch "$url") || return 1
+
+    if [ -z "$fmt" ]; then
+        if [ "$utc" -eq 1 ]; then
+            $_DATE -u -d "@$ts"
+        else
+            $_DATE -d "@$ts"
+        fi
+    elif [ "$utc" -eq 1 ]; then
+        $_DATE -u -d "@$ts" "+$fmt"
+    else
+        $_DATE -d "@$ts" "+$fmt"
+    fi
 }
 
 cmd_sleep() {
@@ -1974,7 +2569,7 @@ cmd_wget() {
 #  用法: file_op <操作> [系统参数] <参数...>
 # 规则:
 # -系统参数原样透传给底层命令
-# -未给关键参数时, 自动补人性化选项(见各分支)
+# -未给关键参数时, 自动补人性化参数(见各分支)
 file_op() {
     [ $# -eq 0 ] && { err "file_op: 缺少操作类型"; return 1; }
 
@@ -1990,7 +2585,7 @@ file_op() {
         *) err "file_op: 未知操作: $op"; return 1 ;;
     esac
 
-    # ---------- 解析选项 / 位置参数 ----------
+    # ---------- 解析参数 / 位置参数 ----------
     local end_opts=0
     local -a opts=() pos=()
     while [ $# -gt 0 ]; do
@@ -2002,13 +2597,13 @@ file_op() {
         esac
     done
 
-    # ---------- 工具: 检测选项串里是否含某字符 ----------
+    # ---------- 工具: 检测参数串里是否含某字符 ----------
     _file_op_has_char() {
         local needle="$1"; shift
         local o
         for o in "$@"; do
             case "$o" in
-                --*) continue ;;                # 长选项不当作短选项字符匹配
+                --*) continue ;;                # 长参数不当作短参数字符匹配
                 -*)  [[ "${o#-}" == *"$needle"* || "${o#-}" == *"${needle^^}"* ]] && return 0 ;;
             esac
         done
@@ -2168,7 +2763,7 @@ file_op() {
 # 七个命令薄壳 (仅帮助 + 参数校验)
 cmd_copy() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
+        ccat << "EOF"
 //cecho -b "用法: COPY [系统参数] <源...> <目标>"
 //cecho -b "脚本行为:"
   - 目标父目录不存在时自动创建
@@ -2182,11 +2777,9 @@ EOF
 
 cmd_move() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: MOVE [系统参数] <源...> <目标>"
-//cecho -b "脚本行为:"
-  - 目标父目录不存在时自动创建
-EOF
+cecho "用法: MOVE [系统参数] <源...> <目标>"
+cecho "脚本行为:"
+cecho "  - 目标父目录不存在时自动创建"
         return 0
     fi
     [ $# -lt 2 ] && { err "用法: MOVE [系统参数] <源...> <目标>"; return 1; }
@@ -2195,11 +2788,9 @@ EOF
 
 cmd_del() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: DEL [系统参数] <目标...>"
-//cecho -b "脚本行为:"
-  - 目标含目录且未给 -r/-R 时自动补 -r
-EOF
+cecho -b "用法: DEL [系统参数] <目标...>"
+cecho -b "脚本行为:"
+cecho "  - 目标含目录且未给 -r/-R 时自动补 -r"
         return 0
     fi
     [ $# -eq 0 ] && { err "用法: DEL [系统参数] <目标...>"; return 1; }
@@ -2208,11 +2799,9 @@ EOF
 
 cmd_md() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: MD [系统参数] <目录...>"
-//cecho -b "脚本行为:"
-  - 未给 -p 时自动补 -p (递归创建父目录)
-EOF
+cecho -b "用法: MD [系统参数] <目录...>"
+cecho -b "脚本行为:"
+cecho "  - 未给 -p 时自动补 -p (递归创建父目录)"
         return 0
     fi
     [ $# -eq 0 ] && { err "用法: MD [系统参数] <目录...>"; return 1; }
@@ -2221,9 +2810,7 @@ EOF
 
 cmd_rd() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: RD [系统参数] <目录...>"
-EOF
+cecho -b "用法: RD [系统参数] <目录...>"
         return 0
     fi
     [ $# -eq 0 ] && { err "用法: RD [系统参数] <目录...>"; return 1; }
@@ -2232,11 +2819,9 @@ EOF
 
 cmd_touch() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: NEW [系统参数] <文件...>"
-//cecho -b "脚本行为:"
-  - 目标父目录不存在时自动创建
-EOF
+cecho -b "用法: NEW [系统参数] <文件...>"
+cecho -b "脚本行为:"
+cecho "  - 目标父目录不存在时自动创建"
         return 0
     fi
     [ $# -eq 0 ] && { err "用法: NEW [系统参数] <文件...>"; return 1; }
@@ -2245,10 +2830,8 @@ EOF
 
 cmd_ln() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        ccat << EOF
-//cecho -b "用法: LN [系统参数] <源> <目标>"
-//cecho -c 90 "创建软链接请用 LN -s <源> <目标>"
-EOF
+cecho -b "用法: LN [系统参数] <源> <目标>"
+cecho -c 90 "创建软链接请用 LN -s <源> <目标>"
         return 0
     fi
     [ $# -lt 2 ] && { err "用法: LN [系统参数] <源> <目标>"; return 1; }
@@ -2732,20 +3315,20 @@ cmd_format() {
         return 0
     fi
 
-    # 执行格式化
+    # 执行格式化(数组传参, 无 eval, 避免命令注入)
     cecho "正在格式化 $device 为 $fstype ..."
-    local cmd=""
+    local -a fmt_cmd
     case "$selected_tool" in
-        mkfs.vfat)   cmd="$selected_tool -F 32 $device" ;;
-        mkfs.ext4|mke2fs) cmd="$selected_tool -F $device" ;;
-        mkfs.f2fs)   cmd="$selected_tool -f $device" ;;
-        mkfs.ntfs)   cmd="$selected_tool -f -Q $device" ;;
-        mkfs.exfat)  cmd="$selected_tool -f $device" ;;
-        make_ext4fs) cmd="$selected_tool $device" ;;
+        mkfs.vfat)        fmt_cmd=("$selected_tool" -F 32 "$device") ;;
+        mkfs.ext4|mke2fs) fmt_cmd=("$selected_tool" -F "$device") ;;
+        mkfs.f2fs)        fmt_cmd=("$selected_tool" -f "$device") ;;
+        mkfs.ntfs)        fmt_cmd=("$selected_tool" -f -Q "$device") ;;
+        mkfs.exfat)       fmt_cmd=("$selected_tool" -f "$device") ;;
+        make_ext4fs)      fmt_cmd=("$selected_tool" "$device") ;;
         *) err "未知工具 $selected_tool"; return 1 ;;
     esac
 
-    if eval "$cmd"; then
+    if "${fmt_cmd[@]}"; then
         cecho -c 92 "格式化成功完成"
         return 0
     else
@@ -3201,19 +3784,317 @@ cmd_getprop() {
     fi
 }
 
-cmd_env() {
+# ---------- PATH 段管理 ----------
+cmd_path() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        cecho -b "用法:"
-        cecho "  ENV [ls] [KEY]        显示所有环境变量(或指定变量)"
-        cecho "  ENV set KEY=VALUE     设置环境变量(也支持 KEY VALUE 空格格式)"
-        cecho "  ENV unset KEY         删除环境变量"
+        cecho -b "用法: PATH [子命令]"
+        ccat << "EOF"
+  (无参数)/ls                列出 PATH 各段(带编号)
+  -r, --raw                  原样输出 PATH 字符串(不编号)
+  add <目录...>              追加到末尾
+  add <序号> <目录...>       插到正序第 <序号> 位 (1=最前)
+  add -f <目录...>           插入到最前面
+  add -f <序号> <目录...>    从末尾倒数第 <序号> 位 (1=最末尾)
+  del <编号|目录...>         删除指定段(可混用)
+  clean                      去重+删除不存在的目录
+  set <值>                   整体替换(危险)
+  -h, --help                 显示本帮助
+EOF
         return 0
     fi
+
+    # 顶层 -r: 原样输出
+    if [ "$1" = "-r" ] || [ "$1" = "--raw" ]; then
+        cecho "$PATH"
+        return 0
+    fi
+
+    case "$1" in
+        ""|ls|list|show)
+            local i=1 p
+            local IFS=':'
+            for p in $PATH; do
+                if [ -z "$p" ]; then
+                    cecho "  $i. <空(表示当前目录)>"
+                else
+                    cecho "  $i. $p"
+                fi
+                ((i++))
+            done
+            ;;
+
+        add)
+            shift
+            local reverse=0
+            if [ "$1" = "-f" ] || [ "$1" = "--reverse" ]; then
+                reverse=1; shift
+            fi
+
+            local pos=""
+            if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+                pos="$1"; shift
+            fi
+
+            [ $# -eq 0 ] && { err "用法: PATH add [-f] [序号] <目录...>"; return 1; }
+
+            local -a _arr=()
+            local IFS=':'
+            read -ra _arr <<< "$PATH"
+            unset IFS
+            local L=${#_arr[@]}
+
+            local dir
+            for dir in "$@"; do
+                # 去重
+                local exists=0 j
+                for j in "${_arr[@]}"; do
+                    [ "$j" = "$dir" ] && { exists=1; break; }
+                done
+                if [ $exists -eq 1 ]; then
+                    cecho "已存在, 跳过: $dir"
+                    continue
+                fi
+
+                # 计算插入索引(0 起算)
+                local idx
+                if [ -z "$pos" ]; then
+                    if [ "$reverse" -eq 1 ]; then
+                        idx=0     # -f 无序号 = 最前
+                    else
+                        idx=$L   # 无 -f 无序号 = 末尾
+                    fi
+                elif [ "$reverse" -eq 1 ]; then
+                    idx=$((L - pos + 1))    # -f N: 从末尾倒数第 N 位
+                    [ $idx -lt 0 ] && idx=0
+                    [ $idx -gt $L ] && idx=$L
+                else
+                    idx=$((pos - 1))      # N: 正序第 N 位
+                    [ $idx -lt 0 ] && idx=0
+                    [ $idx -gt $L ] && idx=$L
+                fi
+
+                if [ $idx -eq 0 ]; then
+                    _arr=("$dir" "${_arr[@]}")
+                elif [ $idx -ge $L ]; then
+                    _arr+=("$dir")
+                    idx=$L
+                else
+                    _arr=("${_arr[@]:0:$idx}" "$dir" "${_arr[@]:$idx}")
+                fi
+                L=$((L + 1))
+                cecho "已添加: $dir (位置 $((idx + 1)))"
+            done
+
+            local joined="" s
+            for s in "${_arr[@]}"; do
+                joined="${joined:+$joined:}$s"
+            done
+            export PATH="$joined"
+            ;;
+
+        del|rm|remove)
+            shift
+            [ $# -eq 0 ] && { err "用法: PATH del <编号|目录...>"; return 1; }
+
+            local -a _arr=()
+            local IFS=':'
+            read -ra _arr <<< "$PATH"
+            unset IFS
+
+            # 收集要删除的索引(从 0 起算)
+            local -A _todel=()
+            local arg
+            for arg in "$@"; do
+                if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                    local idx=$((arg - 1))
+                    if [ $idx -lt 0 ] || [ $idx -ge ${#_arr[@]} ]; then
+                        err "编号越界: $arg"; continue
+                    fi
+                    _todel[$idx]=1
+                else
+                    local found=0 j
+                    for j in "${!_arr[@]}"; do
+                        if [ "${_arr[$j]}" = "$arg" ]; then
+                            _todel[$j]=1; found=1
+                        fi
+                    done
+                    [ $found -eq 0 ] && err "未找到: $arg"
+                fi
+            done
+
+            # 重建
+            local -a _new=()
+            local i
+            for i in "${!_arr[@]}"; do
+                if [ -z "${_todel[$i]:-}" ]; then
+                    _new+=("${_arr[$i]}")
+                else
+                    cecho "已删除: ${_arr[$i]}"
+                fi
+            done
+
+            local joined="" s
+            for s in "${_new[@]}"; do
+                joined="${joined:+$joined:}$s"
+            done
+            export PATH="$joined"
+            ;;
+
+        clean)
+            local -a _arr=() _new=()
+            local IFS=':'
+            read -ra _arr <<< "$PATH"
+            unset IFS
+
+            local -A _seen=()
+            local seg removed=0
+            for seg in "${_arr[@]}"; do
+                if [ -z "$seg" ] || [ ! -d "$seg" ] || [ -n "${_seen[$seg]:-}" ]; then
+                    ((removed++))
+                    continue
+                fi
+                _seen[$seg]=1
+                _new+=("$seg")
+            done
+
+            local joined="" s
+            for s in "${_new[@]}"; do
+                joined="${joined:+$joined:}$s"
+            done
+            export PATH="$joined"
+            cecho "已清理, 移除 $removed 段 (剩 ${#_new[@]} 段)"
+            ;;
+
+        set)
+            shift
+            [ -z "${1:-}" ] && { err "用法: PATH set <值>"; return 1; }
+            if confirm "确定替换 PATH? (可能导致莫名其妙的问题)"; then
+                export PATH="$1"
+                cecho "PATH 已更新"
+            fi
+            ;;
+
+        *)
+            err "未知子命令: $1, 使用 PATH -h 查看帮助"
+            return 1
+            ;;
+    esac
+}
+
+# ---------- ENV search ----------
+# 用法: ENV search [-n|-v] [-C] [-f] <字符串>
+#   -n  只匹配变量名
+#   -v  只匹配变量值
+#   无  两者都匹配
+#   -C  区分大小写(默认不区分), 与 -f 互斥
+#   -f  正则表达式模式(默认固定子串)
+_env_search() {
+    local mode="all"
+    local case_sensitive=0
+    local use_regex=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -n|--name)  mode="name";  shift ;;
+            -v|--value) mode="value"; shift ;;
+            -C)         case_sensitive=1; shift ;;
+            -f)         use_regex=1; shift ;;
+            --) shift; break ;;
+            -*) err "未知参数: $1, 使用 ENV -h 查看帮助"; return 1 ;;
+            *) break ;;
+        esac
+    done
+
+    if [ $# -eq 0 ] || [ -z "$1" ]; then
+        err "用法: ENV search [-n|-v] [-C] [-f] <字符串>"
+        return 1
+    fi
+
+    # -C 与 -f 互斥
+    if [ $use_regex -eq 1 ] && [ $case_sensitive -eq 1 ]; then
+        err "-C 与 -f 冲突: 正则模式下大小写由正则本身控制"
+        return 1
+    fi
+
+    local pat="$1" idx=0
+
+    # 仅固定子串模式使用 nocasematch
+    local _old_nocasematch=""
+    if [ $use_regex -eq 0 ]; then
+        _old_nocasematch=$(shopt -p nocasematch 2>/dev/null)
+        if [ $case_sensitive -eq 0 ]; then
+            shopt -s nocasematch
+        else
+            shopt -u nocasematch
+        fi
+    fi
+
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        local val="${!name}"
+        local match=0
+
+        if [ $use_regex -eq 1 ]; then
+            case "$mode" in
+                name)  [[ "$name" =~ $pat ]] && match=1 ;;
+                value) [[ "$val"  =~ $pat ]] && match=1 ;;
+                all)
+                    [[ "$name" =~ $pat ]] && match=1
+                    [[ "$val"  =~ $pat ]] && match=1
+                    ;;
+            esac
+        else
+            case "$mode" in
+                name)  [[ "$name" == *"$pat"* ]] && match=1 ;;
+                value) [[ "$val"  == *"$pat"* ]] && match=1 ;;
+                all)
+                    [[ "$name" == *"$pat"* ]] && match=1
+                    [[ "$val"  == *"$pat"* ]] && match=1
+                    ;;
+            esac
+        fi
+        [ $match -eq 0 ] && continue
+
+        ((idx++))
+        printf '  %3d. %s=%s\n' "$idx" "$name" "$val"
+    done < <(export -p 2>/dev/null \
+             | $_SED -n 's/^declare -x \([A-Za-z_][A-Za-z0-9_]*\).*/\1/p')
+
+    # 恢复原状态
+    if [ -n "$_old_nocasematch" ]; then
+        eval "$_old_nocasematch" 2>/dev/null
+    fi
+
+    if [ $idx -eq 0 ]; then
+        cecho "无匹配: $pat"
+        return 1
+    fi
+    cecho -c 90 "共匹配 $idx 个变量"
+}
+
+# ---------- ENV ----------
+cmd_env() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        ccat << "EOF"
+//cecho -b "用法:"
+    ENV [ls] [KEY]           显示所有环境变量(或指定变量)"
+    ENV set KEY=VALUE        设置环境变量(也支持 KEY VALUE 空格格式)
+    ENV unset KEY            删除环境变量
+    ENV search [-n|-v] [-C] [-f] <字符串>   搜索变量
+    -n 搜KEY, -v 搜VALUE, 默认两者
+    -C 区分大小写(默认不区分)
+    -f 正则表达式模式(与-C互斥)(默认固定子串)
+EOF
+        return 0
+    fi
+
     if [ $# -eq 0 ]; then
         set -- ls
     fi
+
     local subcmd="$1"
     shift
+
     case "$subcmd" in
         ls|"")
             if [ $# -gt 0 ]; then
@@ -3221,19 +4102,27 @@ cmd_env() {
                     err "变量名不能为空"
                     return 1
                 fi
-                printenv "$1" 2>/dev/null | while IFS= read -r line; do cecho "$line"; done \
-                    || err "未找到环境变量: $1"
+                if [ -z "${!1+x}" ]; then
+                    err "未找到环境变量: $1"
+                    return 1
+                fi
+                _cprint -c 36 -n "$1"
+                _cprint -c 90 -n "="
+                printf '%s\n' "${!1}"
             else
                 if command -v env >/dev/null 2>&1; then
-                    env | while IFS= read -r line; do cecho "$line"; done
-                elif command -v export >/dev/null 2>&1; then
-                    export -p | while IFS= read -r line; do cecho "$line"; done
+                    env | $_SORT | while IFS='=' read -r k v; do
+                        _cprint -c 36 -n "$k"
+                        _cprint -c 90 -n "="
+                        printf '%s\n' "$v"
+                    done
                 else
                     err "无法显示环境变量"
                     return 1
                 fi
             fi
             ;;
+
         set)
             if [ $# -eq 0 ]; then
                 err "用法: ENV set KEY=VALUE 或 ENV set KEY VALUE"
@@ -3256,6 +4145,7 @@ cmd_env() {
             export "$key=$value"
             cecho "已设置环境变量: $key=$value"
             ;;
+
         unset)
             if [ $# -eq 0 ]; then
                 err "用法: ENV unset KEY"
@@ -3273,6 +4163,11 @@ cmd_env() {
                 return 1
             fi
             ;;
+
+        search)
+            _env_search "$@"
+            ;;
+
         *)
             err "未知子命令: $subcmd"
             cecho "使用 ENV -h 查看帮助"
@@ -3358,9 +4253,10 @@ cmd_exts() {
             continue
         fi
 
-        # 收集该目录下的可执行文件
+        # 收集该目录下的可执行文件(含隐藏文件, 与 command -v 行为一致)
         local -a names=()
         local f bn
+        shopt -s dotglob nullglob
         for f in "$dir"/*; do
             [ -e "$f" ] || continue
             [ -x "$f" ] || continue
@@ -3371,6 +4267,7 @@ cmd_exts() {
             fi
             names+=("$bn")
         done
+        shopt -u dotglob nullglob
 
         [ ${#names[@]} -eq 0 ] && continue
 
@@ -3432,47 +4329,59 @@ cmd_exts() {
 }
 
 cmd_watch() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ] || [ $# -lt 2 ]; then
-        cecho -b "用法: WATCH <秒数> <命令> [参数]"
-        cecho "示例: WATCH 2 cmd_systeminfo"
-        cecho "      WATCH 5 ls -l /sdcard"
+    local use_builtin=0
+    if [ "$1" = "-d" ] || [ "$1" = "--builtin" ]; then
+        use_builtin=1
+        shift
+    fi
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -lt 2 ]; then
+        cecho -b "用法: WATCH [-d] <秒数> <命令> [参数]"
+        cecho "  -d, --builtin   使用内置命令(自动匹配 CMD 别名/资源/内置函数)"
+        cecho "示例: WATCH 2 date"
+        cecho "      WATCH -d 2 systeminfo"
         cecho "按Ctrl+C中断"
         return 0
     fi
 
     local interval="$1"
     shift
-    local cmd_line="$*"
+    local cmd_name="$1"
+    shift
+    local cmd_args=("$@")
 
-    # 检查间隔是否为有效的正数(整数或小数)
     if ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
         err "错误:秒数必须是正数"
         return 1
     fi
-    # 使用 bc 检查是否>0
     if [ "$(echo "$interval <= 0" | bc)" -eq 1 ]; then
         err "错误:秒数必须大于0"
         return 1
     fi
 
-    if ! confirm "每 ${interval} 秒清屏并执行: \"$cmd_line\"?(按Ctrl+C随时退出)"; then
+    if ! confirm "每 ${interval} 秒清屏并执行: \"$cmd_name ${cmd_args[*]}\"?(按Ctrl+C随时退出)"; then
         return 0
     fi
 
-    # 保存旧的 INT 陷阱,设置自己的处理
     local old_trap=$(trap -p INT)
     local stop_watch=0
     trap 'stop_watch=1' INT
 
     while [ $stop_watch -eq 0 ]; do
         cmd_cls -n
-        eval "$cmd_line"
+        if [ $use_builtin -eq 1 ]; then
+            _dispatch_cmd "$cmd_name" "${cmd_args[@]}"
+        else
+            if [ ${#cmd_args[@]} -eq 0 ]; then
+                "$cmd_name"
+            else
+                "$cmd_name" "${cmd_args[@]}"
+            fi
+        fi
         if [ $stop_watch -eq 0 ]; then
-            sleep "$interval"   # sleep 已支持小数
+            sleep "$interval"
         fi
     done
 
-    # 恢复旧的陷阱
     if [ -n "$old_trap" ]; then
         eval "$old_trap"
     else
@@ -3482,7 +4391,6 @@ cmd_watch() {
     echo ""
     sleep 0.1
 
-    # 退出时询问是否保留当前输出
     if ! confirm "是否保留输出?"; then
         cmd_cls
     fi
@@ -3491,29 +4399,35 @@ cmd_watch() {
 }
 
 cmd_repeat() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ] || [ $# -lt 2 ]; then
-        cecho -b "用法: REPEAT <次数> <命令> [参数]"
+    local use_builtin=0
+    if [ "$1" = "-d" ] || [ "$1" = "--builtin" ]; then
+        use_builtin=1
+        shift
+    fi
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -lt 2 ]; then
+        cecho -b "用法: REPEAT [-d] <次数> <命令> [参数]"
+        cecho "  -d, --builtin   使用内置命令(自动匹配 CMD 别名/资源/内置函数)"
         cecho "示例: REPEAT 100 echo Hello World"
-        cecho "      REPEAT 3 ls -l"
+        cecho "      REPEAT -d 3 systeminfo"
         cecho "按Ctrl+C中断"
         return 0
     fi
 
     local count="$1"
     shift
-    local cmd_line="$*"
+    local cmd_name="$1"
+    shift
+    local cmd_args=("$@")
 
-    # 验证次数为正整数
     if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -eq 0 ]; then
         err "次数必须是正整数"
         return 1
     fi
 
-    if ! confirm "执行 \"$cmd_line\" *$count?(按Ctrl+C随时退出)"; then
+    if ! confirm "执行 \"$cmd_name ${cmd_args[*]}\" *$count?(按Ctrl+C随时退出)"; then
         return 0
     fi
 
-    # 保存旧的 INT 陷阱,设置自己的处理
     local old_trap=$(trap -p INT)
     local stop_repeat=0
     trap 'stop_repeat=1' INT
@@ -3523,10 +4437,17 @@ cmd_repeat() {
         if [ $stop_repeat -eq 1 ]; then
             break
         fi
-        eval "$cmd_line"
+        if [ $use_builtin -eq 1 ]; then
+            _dispatch_cmd "$cmd_name" "${cmd_args[@]}"
+        else
+            if [ ${#cmd_args[@]} -eq 0 ]; then
+                "$cmd_name"
+            else
+                "$cmd_name" "${cmd_args[@]}"
+            fi
+        fi
     done
 
-    # 恢复旧的 INT 陷阱
     if [ -n "$old_trap" ]; then
         eval "$old_trap"
     else
@@ -3544,35 +4465,48 @@ cmd_repeat() {
 }
 
 cmd_time() {
+    local use_builtin=0
+    if [ "$1" = "-d" ] || [ "$1" = "--builtin" ]; then
+        use_builtin=1
+        shift
+    fi
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [ $# -eq 0 ]; then
-        cecho -b "用法: TIME <命令> [参数]"
-        cecho "测量命令执行耗时"
+        cecho -b "用法: TIME [-d] <命令> [参数]"
+        cecho "  -d, --builtin   使用内置命令(自动匹配 CMD 别名/资源/内置函数)"
         cecho "示例: TIME ls -l"
-        cecho "      TIME sleep 2"
+        cecho "      TIME -d systeminfo"
         cecho "按Ctrl+C中断正在执行的命令"
         return 0
     fi
 
-    # 保存当前 SIGINT 陷阱, 然后让父进程忽略 SIGINT
+    local cmd_name="$1"
+    shift
+    local cmd_args=("$@")
+
     local old_trap=$(trap -p INT)
     trap '' INT
 
-    # 在子 shell 中执行 time, 并在子 shell 内恢复默认 SIGINT 处理
     (
         trap - INT
         TIMEFORMAT=$'实际时间\t%E\n用户时间\t%U秒\n系统时间\t%S秒'
-        time "$@"
+        if [ $use_builtin -eq 1 ]; then
+            time _dispatch_cmd "$cmd_name" "${cmd_args[@]}"
+        else
+            if [ ${#cmd_args[@]} -eq 0 ]; then
+                time "$cmd_name"
+            else
+                time "$cmd_name" "${cmd_args[@]}"
+            fi
+        fi
     )
     local exit_code=$?
 
-    # 恢复父进程原来的 SIGINT 陷阱
     if [ -n "$old_trap" ]; then
         eval "$old_trap"
     else
         trap - INT
     fi
 
-    # 根据退出码提示中断
     if [ $exit_code -eq 130 ]; then
         echo ""
         return 130
@@ -3586,12 +4520,14 @@ cmd_timeout() {
     local kill_after=""
     local preserve_status=0
     local verbose=0
+    local use_builtin=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help)
-                cecho -b "用法: TIMEOUT [参数] <秒数> <命令> [参数]"
+                cecho -b "用法: TIMEOUT [-d] [参数] <秒数> <命令> [参数]"
                 cecho -b "参数:"
+                cecho "  -d, --builtin             使用内置命令(自动匹配 CMD 别名/资源/内置函数)"
                 cecho "  -s, --signal <信号>       超时发送的信号(默认 TERM)"
                 cecho "  -k, --kill-after <时长>   超时后再等指定时长, 仍存活则发 KILL"
                 cecho "      --preserve-status     超时时保留命令自身退出状态"
@@ -3601,6 +4537,8 @@ cmd_timeout() {
                 cecho "  数字[后缀], 后缀 s(秒,默认)/m(分)/h(时)/d(天), 支持小数"
                 return 0
                 ;;
+            -d|--builtin)
+                use_builtin=1; shift ;;
             -s|--signal)
                 if [ $# -lt 2 ]; then err "参数 -s 需要信号名"; return 1; fi
                 signal="$2"; shift 2 ;;
@@ -3626,7 +4564,7 @@ cmd_timeout() {
     done
 
     if [ $# -lt 2 ]; then
-        err "用法: TIMEOUT [参数] <秒数> <命令> [参数], 使用 TIMEOUT -h 查看帮助"
+        err "用法: TIMEOUT [-d] [参数] <秒数> <命令> [参数], 使用 TIMEOUT -h 查看帮助"
         return 1
     fi
 
@@ -3636,7 +4574,7 @@ cmd_timeout() {
     if [ "$1" = "--" ]; then
         shift
     fi
-    # 解析时长为 0.1 秒 tick 数
+
     _timeout_parse_ticks() {
         local d="$1"
         local unit="s"
@@ -3675,28 +4613,35 @@ cmd_timeout() {
         [ -z "$kill_after_ticks" ] && kill_after_ticks=0
     fi
 
-    # 递归给整棵进程树发信号
     _timeout_send_signal() {
         local pid="$1"
         local sig="$2"
         [ "$pid" -eq $$ ] && return
         if [ -d "/proc" ]; then
             local children
-            children=$(grep -l "^PPid:[[:space:]]*$pid$" /proc/*/status 2>/dev/null | cut -d/ -f3)
+            children=$($_GREP -l "^PPid:[[:space:]]*$pid$" /proc/*/status 2>/dev/null | $_CUT -d/ -f3)
             local child
             for child in $children; do
                 _timeout_send_signal "$child" "$sig"
             done
         fi
         kill -"$sig" "$pid" 2>/dev/null
-    }
+}
 
     local old_trap
     old_trap=$(trap -p INT)
 
     # 启动目标命令
-    "$@" &
-    local cmd_pid=$!
+    if [ $use_builtin -eq 1 ]; then
+        local cmd_name="$1"
+        shift
+        local cmd_args=("$@")
+        _dispatch_cmd "$cmd_name" "${cmd_args[@]}" &
+        local cmd_pid=$!
+    else
+        "$@" &
+        local cmd_pid=$!
+    fi
 
     trap 'kill -INT "$cmd_pid" 2>/dev/null' INT
 
@@ -4362,26 +5307,161 @@ cmd_adb() {
     fi
 }
 
-# ---------- CMD/C ----------
-cmd_cmd() {
-    # 帮助
+# ---------- 多行内置命令批量执行 ----------
+# CC 执行上下文标志(防嵌套套娃)
+_CC_RUNNING=0
+
+# 帮助文本(单独抽出来, 嵌套时也可查看)
+# 实际实现
+_cmd_cc_impl() {
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        cecho -b "用法: "
-        cecho "  C/CMD <命令> [参数]    执行系统命令"
-        cecho "  C/CMD                  进入系统交互"
-        cecho "  C/CMD -M               多行输入模式(每行独立执行, Ctrl+D开始)"
-        cecho "  C/CMD -h/--help       显示此帮助"
+        _cmd_cc_help
         return 0
     fi
 
-    # -M 多行输入模式
+    cecho -b "进入多行输入模式 (每行作为独立内置命令按顺序执行, 按 Ctrl+D 开始, Ctrl+C 中断)"
+    cecho "$CMD_delimiter"
+
+    local old_trap interrupted=0
+    old_trap=$(trap -p INT)
+    trap 'interrupted=1' INT
+
+    local input_data
+    input_data=$(cat)
+    local cat_ret=$?
+
+    if [ $interrupted -eq 1 ] || [ $cat_ret -ne 0 ]; then
+        eval "$old_trap" 2>/dev/null || trap - INT
+        echo ""
+        return 130
+    fi
+    if [ -z "$input_data" ]; then
+        eval "$old_trap" 2>/dev/null || trap - INT
+        err "未输入任何内容"
+        return 1
+    fi
+
+    cecho "$CMD_delimiter"
+    cecho "开始按顺序执行:"
+
+    local line_num=0 exec_count=0 fail_count=0
+    while IFS= read -r line; do
+        line_num=$((line_num + 1))
+        local trimmed="${line#"${line%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        [ -z "$trimmed" ] && continue
+        [[ "$trimmed" == \#* ]] && continue
+        if [ $interrupted -eq 1 ]; then break; fi
+
+        _cprint -c 90 "[$line_num] $line"
+
+        # 复用 CMD 解析器(支持变量/引号), 再交给内置命令分发器
+        parse_line "$line"
+        if [ ${#PARSED_ARGS[@]} -eq 0 ]; then
+            continue
+        fi
+
+        local _cc_cmd="${PARSED_ARGS[0],,}"
+        local _cc_args=("${PARSED_ARGS[@]:1}")
+
+        _dispatch_cmd "$_cc_cmd" "${_cc_args[@]}"
+        local ret=$?
+        if [ $ret -ne 0 ]; then
+            fail_count=$((fail_count + 1))
+            err "第 $line_num 行执行失败 (退出码: $ret)"
+        fi
+        exec_count=$((exec_count + 1))
+    done <<< "$input_data"
+
+    eval "$old_trap" 2>/dev/null || trap - INT
+
+    cecho "$CMD_delimiter"
+    if [ $interrupted -eq 1 ]; then
+        err "执行被中断 (已执行 $exec_count 行, 失败 $fail_count 行)"
+        return 130
+    fi
+    cecho "执行完毕: 共 $exec_count 行, 失败 $fail_count 行"
+    return 0
+}
+
+# 对外入口(wrapper): 帮助不受套娃限制, 其余路径自动复位标志
+cmd_cc() {
+    if [ "$_CC_RUNNING" -eq 1 ]; then
+        err "CC: 不支持嵌套调用(已在 CC 执行上下文中)"
+        return 1
+    fi
+
+    _CC_RUNNING=1
+    _cmd_cc_impl "$@"
+    local _cc_ret=$?
+    _CC_RUNNING=0
+    return $_cc_ret
+}
+
+# ---------- CMD/C ----------
+# ---------- CMD/C ----------
+cmd_cmd() {
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    ccat << "EOF"
+  C/CMD                         进入系统交互
+  C/CMD -M                      多行输入模式(每行独立执行, Ctrl+D开始)
+  C/CMD -L <命令> [参数]        前台运行(支持 top 等持续刷新命令)
+  C/CMD -h/--help               显示此帮助
+EOF
+        return 0
+    fi
+
+    if [ "$1" = "-L" ] || [ "$1" = "--long" ]; then
+        shift
+        if [ $# -eq 0 ]; then
+            err "用法: C -L <命令> [参数]"
+            err "  -L, --long   长时间执行模式(前台运行, 支持 top 等持续刷新命令)"
+            return 1
+        fi
+
+        local cmd_disp="$*"
+        [ ${#cmd_disp} -gt 40 ] && cmd_disp="${cmd_disp:0:37}..."
+        cecho -c 90 "长时间执行模式(前台运行, Ctrl+C 直接中断命令): $cmd_disp"
+        cecho "$CMD_delimiter"
+
+        # 保存旧的 INT trap
+        local old_int_trap
+        old_int_trap=$(trap -p INT)
+
+        # 父 shell 忽略 INT, 避免 Ctrl+C 时把父 shell 也带走
+        # 子 shell 内 trap - INT 恢复默认, 让命令能正常响应 Ctrl+C
+        trap '' INT
+
+        (
+            trap - INT
+            eval "$@"
+        )
+        local exit_code=$?
+
+        # 恢复旧 trap
+        if [ -n "$old_int_trap" ]; then
+            eval "$old_int_trap"
+        else
+            trap - INT
+        fi
+
+        if [ $exit_code -ne 0 ]; then
+            echo ""
+            err "命令以退出码 $exit_code 退出"
+            return $exit_code
+        else
+            echo ""
+            cecho "命令执行完毕"
+            return 0
+        fi
+    fi
+
     if [ "$1" = "-M" ]; then
         cecho -b "进入多行输入模式 (每行作为独立命令, 按顺序执行, 按 Ctrl+D 开始, Ctrl+C退出)"
         cecho "$CMD_delimiter"
 
-        local old_trap
+        local old_trap interrupted=0
         old_trap=$(trap -p INT)
-        local interrupted=0
         trap 'interrupted=1' INT
 
         local input_data
@@ -4393,7 +5473,6 @@ cmd_cmd() {
             echo ""
             return 130
         fi
-
         if [ -z "$input_data" ]; then
             eval "$old_trap" 2>/dev/null || trap - INT
             err "未输入任何内容"
@@ -4403,21 +5482,13 @@ cmd_cmd() {
         cecho "$CMD_delimiter"
         cecho "开始按顺序执行:"
 
-        local line_num=0
-        local exec_count=0
-        local fail_count=0
-
+        local line_num=0 exec_count=0 fail_count=0
         while IFS= read -r line; do
             line_num=$((line_num+1))
-            # 跳过空行 / 纯注释行
             local trimmed="${line#"${line%%[![:space:]]*}"}"
             [ -z "$trimmed" ] && continue
             [[ "$trimmed" == \#* ]] && continue
-
-            if [ $interrupted -eq 1 ]; then
-                break
-            fi
-
+            if [ $interrupted -eq 1 ]; then break; fi
             _cprint -c 90 "[$line_num] $line"
             eval "$line"
             local ret=$?
@@ -4429,7 +5500,6 @@ cmd_cmd() {
         done <<< "$input_data"
 
         eval "$old_trap" 2>/dev/null || trap - INT
-
         cecho "$CMD_delimiter"
         if [ $interrupted -eq 1 ]; then
             err "执行被中断 (已执行 $exec_count 行, 失败 $fail_count 行)"
@@ -4439,51 +5509,60 @@ cmd_cmd() {
         return 0
     fi
 
-    # 无参数: 动态获取当前 shell 并进入交互模式
     if [ $# -eq 0 ]; then
         local shell_bin=""
-
-        # 优先 /proc/$$/exe, 其次 $BASH, 再次 $0, 最后 sh
         if [ -L "/proc/$$/exe" ]; then
             shell_bin=$(readlink -f "/proc/$$/exe" 2>/dev/null)
         fi
+        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then shell_bin="$BASH"; fi
         if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
-            shell_bin="$BASH"
+            if [ -x "$0" ]; then shell_bin="$0"; else shell_bin=$(command -v "$0" 2>/dev/null); fi
         fi
-        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
-            if [ -x "$0" ]; then
-                shell_bin="$0"
-            else
-                shell_bin=$(command -v "$0" 2>/dev/null)
-            fi
-        fi
-        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then
-            shell_bin="sh"
-        fi
+        if [ -z "$shell_bin" ] || [ ! -x "$shell_bin" ]; then shell_bin="sh"; fi
 
-        # 路径超过 10 字符则截断显示, 执行仍用完整路径
         local shell_disp="$shell_bin"
         [ ${#shell_disp} -gt 30 ] && shell_disp="...${shell_disp: -27}"
+
+        local shell_base use_hist=0 sub_hist=""
+        shell_base=$(basename "$shell_bin" 2>/dev/null)
+        shell_base="${shell_base#-}"
+        if [[ "$shell_base" == bash* ]]; then
+            sub_hist="$TMP_DIR/subhist_$$_$(date +%s%N).hist"
+            if : > "$sub_hist" 2>/dev/null; then use_hist=1; else sub_hist=""; fi
+        fi
 
         cecho -b "进入交互模式 [$shell_disp] (exit 或 Ctrl+D 退出)"
         cecho "$CMD_delimiter"
 
-        "$shell_bin" -i
+        if [ $use_hist -eq 1 ]; then
+            HISTFILE="$sub_hist" HISTSIZE=1000 HISTFILESIZE=1000 "$shell_bin" -i
+        else
+            "$shell_bin" -i
+        fi
         local exit_code=$?
+
+        if [ $use_hist -eq 1 ] && [ -s "$sub_hist" ]; then
+            local added=0 line
+            while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+                [[ "$line" =~ ^#[0-9]+$ ]] && continue
+                history -s "c $line"
+                added=$((added + 1))
+            done < "$sub_hist"
+            if [ $added -gt 0 ]; then
+                history -w "$HISTFILE"
+                cecho -c 90 "已记录 $added 调命令在历史中(格式:c \$实际系统命令)"
+            fi
+        fi
+        [ -n "$sub_hist" ] && rm -f "$sub_hist" 2>/dev/null
 
         cecho "已退出系统交互(退出码: $exit_code)"
         return $exit_code
     fi
 
-    # 有参数: 原样执行
-    if ! confirm "确认要执行这个命令吗?(请确认命令是否安全!)"; then
-        echo ""
-        return 0
-    fi
-
     local old_trap=$(trap -p INT)
-    local child_pid=""
-    local interrupted=0
+    local child_pid="" interrupted=0
     trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
     eval "$@" &
     child_pid=$!
@@ -4506,135 +5585,54 @@ cmd_cmd() {
     fi
 }
 
-cmd_bash() {
-    # 帮助
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        cecho -b "用法: "
-        cecho "  BASH                   进入 bash 交互模式"
-        cecho "  BASH <参数>            调用系统 bash 执行"
-        cecho "  BASH -M                多行脚本模式(Ctrl+D 后由 bash 执行)"
-        cecho "  BASH -h/--help         显示此帮助"
-        return 0
-    fi
-
-    # -M 多行脚本模式: 收集输入 -> 写入临时文件 -> 交给 bash 整体执行
-    if [ "$1" = "-M" ]; then
-        cecho -b "进入 BASH 多行脚本模式 (按 Ctrl+D 开始, Ctrl+C 取消)"
-        cecho "$CMD_delimiter"
-
-        local old_trap
-        old_trap=$(trap -p INT)
-        local interrupted=0
-        trap 'interrupted=1' INT
-
-        local input_data
-        input_data=$(cat)
-        local cat_ret=$?
-
-        if [ $interrupted -eq 1 ] || [ $cat_ret -ne 0 ]; then
-            eval "$old_trap" 2>/dev/null || trap - INT
-            echo ""
-            return 130
-        fi
-
-        if [ -z "$input_data" ]; then
-            eval "$old_trap" 2>/dev/null || trap - INT
-            err "未输入任何内容"
-            return 1
-        fi
-
-        cecho "$CMD_delimiter"
-
-        # 写入临时脚本文件
-        local tmp_script="$TMP_DIR/bash_M_$$_$(date +%s%N).sh"
-        if ! printf '%s\n' "$input_data" > "$tmp_script" 2>/dev/null; then
-            eval "$old_trap" 2>/dev/null || trap - INT
-            err "无法创建临时脚本文件"
-            return 1
-        fi
-
-        cecho "执行 bash 脚本 (临时文件: $tmp_script)"
-        cecho "$CMD_delimiter"
-
-        local child_pid=""
-        trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
-
-        command bash "$tmp_script" &
-        child_pid=$!
-        wait "$child_pid"
-        local exit_code=$?
-
-        eval "$old_trap" 2>/dev/null || trap - INT
-        rm -f "$tmp_script" 2>/dev/null
-
-        if [ $interrupted -eq 1 ]; then
-            echo ""
-            cecho "bash 脚本被用户中断"
-            return 130
-        elif [ $exit_code -ne 0 ]; then
-            echo ""
-            err "bash 脚本以退出码 $exit_code 退出"
-            return $exit_code
-        else
-            echo ""
-            cecho "bash 脚本执行完成"
-            return 0
-        fi
-    fi
-
-    # 无参数: 复用 cmd_cmd 的交互模式逻辑
-    if [ $# -eq 0 ]; then
-        cmd_cmd
-        return $?
-    fi
-
-    # 有参数: 确认
-    if ! confirm "确认要执行这个命令吗?(请确认命令是否安全!)"; then
-        echo ""
-        return 0
-    fi
-
-    # 执行真正的 bash, 带信号处理
-    local old_trap=$(trap -p INT)
-    local child_pid=""
-    local interrupted=0
-    trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
-    command bash "$@" &
-    child_pid=$!
-    wait "$child_pid"
-    local exit_code=$?
-    eval "$old_trap" 2>/dev/null || trap - INT
-
-    if [ $interrupted -eq 1 ]; then
-        echo ""
-        cecho "命令被中断"
-        return 130
-    elif [ $exit_code -ne 0 ]; then
-        echo ""
-        err "命令以退出码 $exit_code 退出"
-        return $exit_code
-    else
-        echo ""
-        cecho "命令执行完毕"
-        return 0
-    fi
+cmd_sh_usage() {
+    ccat << "EOF"
+//cecho -b "用法: SH/RUN [-s <shell>] <脚本路径> [参数]"
+      SH/RUN [-s <shell>] -M   多行脚本编辑模式(Ctrl+D开始)
+//cecho -b "选项:"
+  -s, --shell <shell>  指定解释器 (默认: bash)
+  -M                   多行脚本编辑模式
+  -h, --help           显示此帮助
+EOF
 }
 
 cmd_sh() {
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: SH <脚本路径> [参数]"
-        cecho "      SH -M              多行脚本编辑模式(Ctrl+D开始)"
+    local shell_bin="bash"
+    local mode_m=0
+
+    if [ $# -eq 0 ]; then
+        cmd_sh_usage
         return 0
     fi
 
-    # -M 多行脚本编辑模式
-    if [ "$1" = "-M" ]; then
-        cecho -b "进入脚本编辑模式 (按 Ctrl+D 开始, Ctrl+C 取消)"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help) cmd_sh_usage; return 0 ;;
+            -M) mode_m=1; shift ;;
+            -s|--shell)
+                if [ $# -lt 2 ]; then err "选项 $1 缺少 shell 参数"; return 1; fi
+                shell_bin="$2"; shift 2 ;;
+            --shell=*) shell_bin="${1#--shell=}"; shift ;;
+            -s?*) shell_bin="${1#-s}"; shift ;;
+            --) shift; break ;;
+            -*) err "未知选项: $1"; return 1 ;;
+            *) break ;;
+        esac
+    done
+
+    if [ -z "$shell_bin" ]; then err "shell 不能为空"; return 1; fi
+    if ! command -v "$shell_bin" >/dev/null 2>&1; then
+        err "指定的解释器不存在或不可执行: $shell_bin"
+        return 1
+    fi
+
+    # -------- -M 多行脚本编辑模式 --------
+    if [ "$mode_m" -eq 1 ]; then
+        cecho -b "进入脚本编辑模式 (解释器: $shell_bin, 按 Ctrl+D 开始, Ctrl+C 取消)"
         cecho "$CMD_delimiter"
 
-        local old_trap
+        local old_trap interrupted=0
         old_trap=$(trap -p INT)
-        local interrupted=0
         trap 'interrupted=1' INT
 
         local input_data
@@ -4646,7 +5644,6 @@ cmd_sh() {
             echo ""
             return 130
         fi
-
         if [ -z "$input_data" ]; then
             eval "$old_trap" 2>/dev/null || trap - INT
             err "未输入任何内容"
@@ -4655,7 +5652,6 @@ cmd_sh() {
 
         cecho "$CMD_delimiter"
 
-        # 写入临时脚本文件
         local tmp_script="$TMP_DIR/sh_M_$$_$(date +%s%N).sh"
         if ! printf '%s\n' "$input_data" > "$tmp_script" 2>/dev/null; then
             eval "$old_trap" 2>/dev/null || trap - INT
@@ -4663,13 +5659,13 @@ cmd_sh() {
             return 1
         fi
 
-        cecho "执行脚本 (临时文件: $tmp_script)"
+        cecho "执行脚本 (解释器: $shell_bin, 临时文件: $tmp_script)"
         cecho "$CMD_delimiter"
 
         local child_pid=""
         trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
 
-        sh "$tmp_script" &
+        "$shell_bin" "$tmp_script" </dev/null &
         child_pid=$!
         wait "$child_pid"
         local exit_code=$?
@@ -4692,26 +5688,24 @@ cmd_sh() {
         fi
     fi
 
-    # 原有的脚本文件执行逻辑
+    # -------- 脚本文件执行模式 --------
+    if [ $# -eq 0 ]; then
+        err "缺少脚本路径"
+        cmd_sh_usage
+        return 1
+    fi
     local script="$1"
     shift
-    if [ ! -f "$script" ]; then
-        err "脚本文件不存在: $script"
-        return 1
-    fi
-    if [ ! -r "$script" ]; then
-        err "脚本文件不可读: $script"
-        return 1
-    fi
-    if ! confirm "确认要执行此脚本吗?(请确认脚本内不含危险代码!)"; then
+    if [ ! -f "$script" ]; then err "脚本文件不存在: $script"; return 1; fi
+    if [ ! -r "$script" ]; then err "脚本文件不可读: $script"; return 1; fi
+    if ! confirm "确认要执行此脚本吗?(解释器: $shell_bin, 请确认脚本内不含危险代码!)"; then
         return 0
     fi
-    cecho "执行脚本: $script"
-    local old_trap=$(trap -p INT)
-    local child_pid=""
-    local interrupted=0
+    cecho "执行脚本: $script (解释器: $shell_bin)"
+    local old_trap child_pid="" interrupted=0
+    old_trap=$(trap -p INT)
     trap 'interrupted=1; [ -n "$child_pid" ] && kill -INT "$child_pid" 2>/dev/null' INT
-    sh "$script" "$@" &
+    "$shell_bin" "$script" "$@" <&0 &
     child_pid=$!
     wait "$child_pid"
     local exit_code=$?
@@ -4875,39 +5869,117 @@ cmd_fun() {
 }
 
 cmd_kill() {
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
-        cecho -b "用法: KILL <PID> / KILL -9 <PID> (强制终止) / KILL -2 <PID> (中断)"
-        cecho "使用 TASKLIST 查看进程列表"
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ $# -eq 0 ]; then
+        ccat << "EOF"
+//cecho -b "用法: KILL [选项] <PID>"
+//cecho -b "信号:"
+  -2,  -INT     中断 (SIGINT)
+  -15, -TERM    终止 (SIGTERM, 默认)
+  -9,  -KILL    强制终止 (SIGKILL)
+//cecho -b "模式:"
+  -t, --tree    递归整棵进程树
+//cecho -b "说明:"
+  递归模式下, 非 -9 信号先发一次, 0.5s 没退出则升级 SIGKILL
+  -t -9 跳过等待, 每层直接 SIGKILL
+  不允许终止当前脚本自身或祖先进程(请用killself)
+EOF
         return 0
     fi
+
+    # ---------- 解析选项 (顺序任意) ----------
     local signal="TERM"
-    local pid=""
-    if [ "$1" = "-9" ] || [ "$1" = "-KILL" ] || [ "$1" = "-SIGKILL" ]; then
-        signal="KILL"; shift
-    elif [ "$1" = "-15" ] || [ "$1" = "-TERM" ] || [ "$1" = "-SIGTERM" ]; then
-        signal="TERM"; shift
-    elif [ "$1" = "-2" ] || [ "$1" = "-INT" ] || [ "$1" = "-SIGINT" ]; then
-        signal="INT"; shift
-    fi
+    local mode="single"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -9|-KILL|-SIGKILL)       signal="KILL";  shift ;;
+            -15|-TERM|-SIGTERM)      signal="TERM";  shift ;;
+            -2|-INT|-SIGINT)         signal="INT";   shift ;;
+            -t|--tree)               mode="tree";    shift ;;
+            --)                      shift; break ;;
+            *)                       break ;;
+        esac
+    done
+
     if [ $# -eq 0 ]; then
         err "需要指定进程ID, 使用 KILL -h 查看帮助"
         return 1
     fi
-    pid="$1"
-    if ! echo "$pid" | grep -qE '^[0-9]+$'; then
+
+    local pid="$1"
+
+    # ---------- PID 合法性(纯 bash) ----------
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
         err "无效的进程ID: $pid"
         return 1
     fi
-    if ! ps -p "$pid" >/dev/null 2>&1; then
-        err "进程 $pid 不存在或已终止"
+    if [ "$pid" -le 1 ]; then
+        err "拒绝操作: PID $pid 是特殊进程 (init/kthreadd)"
         return 1
     fi
-    local proc_info=""
-    if command -v ps >/dev/null 2>&1; then
-        proc_info=$(ps -o pid,user,comm= -p "$pid" 2>/dev/null | tail -1)
+
+    # ---------- 存在性检查( /proc 优先, 无 /proc 才用 $_PS ) ----------
+    if [ -d "/proc" ]; then
+        if [ ! -d "/proc/$pid" ]; then
+            err "进程 $pid 不存在或已终止"
+            return 1
+        fi
     else
-        proc_info="PID: $pid"
+        if ! $_PS -p "$pid" >/dev/null 2>&1; then
+            err "进程 $pid 不存在或已终止"
+            return 1
+        fi
     fi
+
+    # ---------- 前置友好检查: 自身 ----------
+    # 祖先检查在 _kill_process_tree 里做(返回 2 时才算命中)
+    if [ "$pid" -eq "$$" ]; then
+        err "拒绝操作: 不能终止当前脚本自身 (PID: $$) (请用killself)"
+        return 1
+    fi
+
+    # ---------- 收集进程信息( /proc 优先, 避免 $_PS -o 兼容问题 ) ----------
+    local proc_info="PID: $pid"
+    if [ -d "/proc" ] && [ -r "/proc/$pid" ]; then
+        local _comm="" _uid=""
+        if [ -r "/proc/$pid/comm" ]; then
+            _comm=$($_CAT "/proc/$pid/comm" 2>/dev/null)
+            _comm="${_comm%$'\n'}"
+        fi
+        if [ -r "/proc/$pid/status" ]; then
+            _uid=$($_AWK -F'[[:space:]]+' '/^Uid:/ {print $2; exit}' "/proc/$pid/status" 2>/dev/null)
+        fi
+        if [ -n "$_comm" ]; then
+            proc_info="$pid  ${_uid:-?}  $_comm"
+        fi
+    elif command -v ps >/dev/null 2>&1; then
+        proc_info=$($_PS -o pid,user,comm= -p "$pid" 2>/dev/null | $_TAIL -n 1)
+        [ -z "$proc_info" ] && proc_info="PID: $pid"
+    fi
+
+    # ================= 树模式 =================
+    if [ "$mode" = "tree" ]; then
+        cecho -c 93 "将递归终止进程 $pid 及其所有子进程"
+        cecho "进程信息: $proc_info"
+        if [ "$signal" = "KILL" ]; then
+            cecho -c 91 "最终信号: SIGKILL (每层不等待)"
+        else
+            cecho "最终信号: SIG$signal (0.5s 后升级 SIGKILL)"
+        fi
+        if ! confirm "确认杀整棵进程树吗?"; then
+            return 0
+        fi
+
+        _kill_process_tree "$pid" "$signal"
+        local _ret=$?
+        if [ "$_ret" -eq 2 ]; then
+            err "拒绝操作: $pid 是当前脚本 (PID $$) 的自身或祖先进程"
+            return 1
+        fi
+        cecho "已对进程树发送 SIG$signal (PID $pid)"
+        return 0
+    fi
+
+    # ================= 单进程模式 =================
     if [ "$signal" = "KILL" ]; then
         cecho "发送 SIGKILL (强制终止) 信号给进程 $pid?"
         cecho "进程信息: $proc_info"
@@ -4923,7 +5995,8 @@ cmd_kill() {
             return 0
         fi
     fi
-    if kill -$signal "$pid" 2>/dev/null; then
+
+    if kill -"$signal" "$pid" 2>/dev/null; then
         cecho "已发送 SIG$signal 信号到进程 $pid"
         if [ "$signal" = "TERM" ] || [ "$signal" = "INT" ]; then
             cecho "等待进程退出..."
@@ -4933,11 +6006,11 @@ cmd_kill() {
                 waited=$((waited + 1))
             done
             if kill -0 "$pid" 2>/dev/null; then
-                cecho "进程 $pid 未响应 SIG$signal,尝试强制终止..."
+                cecho "进程 $pid 未响应 SIG$signal, 尝试强制终止..."
                 if kill -KILL "$pid" 2>/dev/null; then
                     cecho "已强制终止进程 $pid"
                 else
-                    err "强制终止失败,进程可能已被保护或无权限"
+                    err "强制终止失败, 进程可能已被保护或无权限"
                     return 1
                 fi
             else
@@ -4947,10 +6020,10 @@ cmd_kill() {
         return 0
     else
         local kill_result=$?
-        case $kill_result in
-            1) err "操作不允许: 无法终止进程 $pid" ;;
+        case "$kill_result" in
+            1)   err "操作不允许: 无法终止进程 $pid" ;;
             127) err "KILL: 命令不可用" ;;
-            *) err "终止进程失败 (错误码: $kill_result)" ;;
+            *)   err "终止进程失败 (错误码: $kill_result)" ;;
         esac
         return 1
     fi
@@ -4981,64 +6054,69 @@ debug_2() {
         err "无法加载 codewc"
         return 1
     }
-    if ! type -t cmd_codewc >/dev/null 2>&1; then
+    type -t cmd_codewc >/dev/null 2>&1 || {
         err "cmd_codewc 未定义"
         return 1
-    fi
+    }
 
     # 主程序统计(原始+有效)
     local main_file="$0"
-    local main_name=$(basename "$main_file")
-    local main_lines=$(wc -l < "$main_file" 2>/dev/null | tr -d ' ')
-    local main_bytes=$(wc -c < "$main_file" 2>/dev/null | tr -d ' ')
+    local main_name="${main_file##*/}"          # 内建替代 basename
+
+    local main_lines=0 main_bytes=0
+    read -r main_lines main_bytes _ < <(wc -lc < "$main_file" 2>/dev/null) || true
     [[ -z "$main_lines" ]] && main_lines=0
     [[ -z "$main_bytes" ]] && main_bytes=0
 
     local main_eff_lines=0 main_eff_words=0 main_eff_chars=0
-    local main_eff_output=$(cmd_codewc -t shell "$main_file" 2>/dev/null)
-    if [[ -n "$main_eff_output" ]]; then
-        local eff_line=$(echo "$main_eff_output" | grep "有效" | head -1)
-        main_eff_lines=$(echo "$eff_line" | grep -oE '有效行数: [0-9]+' | grep -oE '[0-9]+')
-        main_eff_words=$(echo "$eff_line" | grep -oE '有效单词数: [0-9]+' | grep -oE '[0-9]+')
-        main_eff_chars=$(echo "$eff_line" | grep -oE '有效字符数: [0-9]+' | grep -oE '[0-9]+')
-        [[ -z "$main_eff_lines" ]] && main_eff_lines=0
-        [[ -z "$main_eff_words" ]] && main_eff_words=0
-        [[ -z "$main_eff_chars" ]] && main_eff_chars=0
-    fi
+    local main_eff_output
+    main_eff_output=$(cmd_codewc -t shell "$main_file" 2>/dev/null)
+    # Bash 正则替代 grep|head|grep 一串管道
+    [[ $main_eff_output =~ 有效行数:[[:space:]]*([0-9]+)   ]] && main_eff_lines=${BASH_REMATCH[1]}
+    [[ $main_eff_output =~ 有效单词数:[[:space:]]*([0-9]+) ]] && main_eff_words=${BASH_REMATCH[1]}
+    [[ $main_eff_output =~ 有效字符数:[[:space:]]*([0-9]+) ]] && main_eff_chars=${BASH_REMATCH[1]}
 
-    # 资源目录统计(仅原始
-    local res_total_lines=0 res_total_bytes=0
-    local file_count=0
+    # 资源目录统计：一次遍历, 边算边缓存明细
+    local res_total_lines=0 res_total_bytes=0 file_count=0
+    local -a detail=()
 
     if [[ -d "$RESOURCE_DIR" ]]; then
         shopt -s globstar nullglob dotglob
-        local bash_files=("$RESOURCE_DIR"/**/*.bash)
+        local -a bash_files=("$RESOURCE_DIR"/**/*.bash)
         shopt -u globstar nullglob dotglob
 
+        local file rel l b
         for file in "${bash_files[@]}"; do
-            if [ -f "$file" ]; then
-                local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
-                local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
-                [[ -z "$lines" ]] && lines=0
-                [[ -z "$bytes" ]] && bytes=0
-                res_total_lines=$((res_total_lines + lines))
-                res_total_bytes=$((res_total_bytes + bytes))
-                ((file_count++))
-            fi
+            [[ -f "$file" ]] || continue
+            # wc -lc 一次拿行数和字节数(替代两次 wc + 两次 tr)
+            read -r l b _ < <(wc -lc < "$file" 2>/dev/null) || true
+            [[ -z "$l" ]] && l=0
+            [[ -z "$b" ]] && b=0
+            rel="${file#"$RESOURCE_DIR"/}"
+            detail+=("  $rel: $l 行, $b 字节")
+            res_total_lines=$((res_total_lines + l))
+            res_total_bytes=$((res_total_bytes + b))
+            ((++file_count))
         done
     fi
 
-    # 总计
     local total_lines=$((main_lines + res_total_lines))
     local total_bytes=$((main_bytes + res_total_bytes))
 
     cecho -b "--- 代码统计 ---"
     cecho "主程序 ($main_name): $main_lines 行, $main_bytes 字节 | 有效: $main_eff_lines 行, $main_eff_words 单词, $main_eff_chars 字符"
-    if [[ $file_count -gt 0 ]]; then
-        cecho "资源目录 (共 $file_count 个 .bash 文件): $res_total_lines 行, $res_total_bytes 字节"
+
+    if ((file_count > 0)); then
+        cecho -b "资源目录 (共 $file_count 个 .bash 文件):"
+        local line
+        for line in "${detail[@]}"; do
+            cecho "$line"
+        done
+        cecho "资源目录合计: $res_total_lines 行, $res_total_bytes 字节"
     else
         err "资源目录未发现任何 .bash"
     fi
+
     cecho -b "总计: $total_lines 行, $total_bytes 字节"
 }
 # ---------- 主逻辑 ---------
@@ -5058,129 +6136,6 @@ if [ -z "$TMP_DIR" ] || [ ! -d "$TMP_DIR" ] || [ ! -w "$TMP_DIR" ]; then
         mkdir -p "$TMP_DIR" 2>/dev/null || true
     fi
 fi
-
-# ---------- 版本更新检查 ----------
-# 从字符串中提取版本号
-_extract_ver() {
-    echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
-}
-# 比较两个版本号, 如果 v1 >= v2 返回 0(真), 否则返回 1
-_ver_ge() {
-    # 比较两个版本号(如 0.15.1 和 0.15), 返回 0 表示 v1 >= v2
-    local v1=($(echo "$1" | tr '.' ' '))
-    local v2=($(echo "$2" | tr '.' ' '))
-    local len1=${#v1[@]} len2=${#v2[@]}
-    local max_len=$(( len1 > len2 ? len1 : len2 ))
-    for ((i=0; i<max_len; i++)); do
-        local a=${v1[i]:-0}   # 若缺失则视为 0
-        local b=${v2[i]:-0}
-        if (( a > b )); then return 0; fi
-        if (( a < b )); then return 1; fi
-    done
-    return 0  # 相等
-}
-_get_latest_ver() {
-    local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
-    local tag=""
-    if [ "$HAS_CURL" -eq 1 ]; then
-        tag=$($_CURL -s -L --connect-timeout 3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
-    elif [ "$HAS_WGET" -eq 1 ]; then
-        tag=$($_WGET -qO- --timeout=3 "$url" 2>/dev/null | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
-    fi
-    echo "$tag"
-}
-_update_cache="$TMP_DIR/latest_version"
-_update_prompted=0
-_update_check_count=0
-# 后台执行检查
-(
-    rm -f "$_update_cache"
-    remote_tag=$(_get_latest_ver)
-    if [ -n "$remote_tag" ]; then
-        remote_ver=$(_extract_ver "$remote_tag")
-        current_ver=$(_extract_ver "$CMD_VER")
-        if [ -n "$remote_ver" ] && [ -n "$current_ver" ] && ! _ver_ge "$current_ver" "$remote_ver"; then
-            # 远程版本大于当前版本
-            echo "$remote_tag" > "$_update_cache"
-        else
-            rm -f "$_update_cache"
-        fi
-    else
-        rm -f "$_update_cache"
-    fi
-) &
-
-cmd_update() {
-    local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases/latest"
-    local json=""
-    if [ "$HAS_CURL" -eq 1 ]; then
-        json=$($_CURL -s -L --connect-timeout 5 "$url" 2>/dev/null)
-    elif [ "$HAS_WGET" -eq 1 ]; then
-        json=$($_WGET -qO- --timeout=5 "$url" 2>/dev/null)
-    else
-        err "需要 curl 或 wget"
-        return 1
-    fi
-
-    if [ -z "$json" ]; then
-        err "获取发布信息失败, 请检查网络"
-        return 1
-    fi
-
-    local tag_name=$(echo "$json" | grep tag_name | cut -d':' -f2 | cut -d'"' -f2)
-    if [ -z "$tag_name" ]; then
-        err "无法解析版本号"
-        return 1
-    fi
-
-    local published_at=$(echo "$json" | grep published_at | cut -d':' -f2,3 | cut -d'"' -f2)
-    local html_url=$(echo "$json" | grep -m1 '"html_url"' | cut -d'"' -f4)
-
-    remote_ver=$(_extract_ver "$tag_name")
-    current_ver=$(_extract_ver "$CMD_VER")
-
-    if [ -z "$remote_ver" ] || [ -z "$current_ver" ]; then
-        err "无法提取版本号 (仓库: '$remote_ver', 当前: '$current_ver')"
-        return 1
-    fi
-
-    # 版本比较
-    if _ver_ge "$remote_ver" "$current_ver"; then
-        if [ "$remote_ver" = "$current_ver" ]; then
-            cecho -c 92 "已是最新版本 [当前: $remote_ver($tag_name)]"
-            cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
-            rm -f "$_update_cache"
-            return 0
-        fi
-        # 有新版本
-        cecho -c 96 "新版本: $remote_ver($tag_name) 当前: [$current_ver]"
-        [ -n "$published_at" ] && cecho -c 90 "发布时间(UTC): $published_at"
-
-        # 发行说明(仅新版本时显示)
-       local body=$(echo "$json" | sed -n 's/.*"body": "\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p')
-        if [ -n "$body" ]; then
-            cecho -b "发行说明:"
-            printf '%b\n' "$body" | while IFS= read -r line; do
-                cecho "$line"
-            done
-        fi
-
-        # 链接指向本次发行页
-        if [ -n "$html_url" ]; then
-            cecho -c "#6CA8F1" -u "$html_url"
-        else
-            cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
-        fi
-    else
-        # 仓库版本反而更旧
-        err "未知的版本, 大于仓库的最新版本!"
-        err "这可能意味着您在使用非官方版本或者开发版本!"
-        cecho -c 93 "当前版本: $current_ver, 仓库最新: $remote_ver($tag_name)"
-        cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
-    fi
-
-    rm -f "$_update_cache"
-}
 
 # 检查临时目录大小
 check_tmpdir_size() {
@@ -5202,80 +6157,518 @@ check_tmpdir_size
         cecho -c 93 -b "[NET] 你只有一个网络工具(WGET), 网络功能可能受限"
     fi
 fi
-# ---------- 主循环 ----------
-while true; do
-    # 判断是否使用默认颜色(黑底亮白)
-    if [ "$BG" = "40" ] && [ "$FG" = "97" ]; then
-        case "$PRIV_LEVEL" in
-            root) CMD_prompt_fg___=95 ;;   # 紫色
-            adb)  CMD_prompt_fg___=96 ;;   # 蓝色
-            *)    CMD_prompt_fg___=97 ;;   # 普通用户亮白
+
+# ---------- 版本更新检查 ----------
+# 支持的版本格式:
+#   数字段: x.xx / x.xx.x / x.xx.x.x  (逐段比较, 缺省补 0)
+#   后缀:
+# _pre       第一个预发布版本 (= _pre1)
+# _preN      第N个预发布版本 (N >= 1)
+# _re        正式版(与无后缀等价)
+# _bug_a     当前数字段的 Bug 修复 (字母 a-z)
+# 相同数字段排序:
+# _pre1 < _pre2 < ... < 正式(无后缀=_re) < _bug_a < _bug_b < ... < 下一数字段
+
+# 配置兜底: 即使配置里漏了, 也不至于让 UPDATE_PRE 为空
+UPDATE_PRE="${UPDATE_PRE:-0}"
+
+# 字母 -> 序号 (a=1, b=2, ..., z=26), 无 fork
+_letter_ord() {
+    local c="$1"
+    case "$c" in
+        [a-z]) ;;
+        *) return 1 ;;
+    esac
+    local ord
+    printf -v ord '%d' "'$c"
+    printf '%d' "$((ord - 96))"
+}
+
+# 解析版本到全局变量:
+#   _PV_MAJOR / _PV_MINOR / _PV_PATCH / _PV_EXTRA   数字段(缺省为 0)
+#   _PV_SUFFIX_TYPE   0=_pre  1=正式(含 _re)  2=_bug_*
+#   _PV_SUFFIX_VAL    _pre 时=预发布编号(默认1), _bug 时=字母序号(1-26), 正式=0
+# 解析失败返回 1, 全程无 fork
+_parse_ver() {
+    local raw="$1"
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    raw="${raw#v}"
+    raw="${raw#V}"
+
+    local suffix
+    if [[ "$raw" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?(\.([0-9]+))?(.*)$ ]]; then
+        _PV_MAJOR="${BASH_REMATCH[1]}"
+        _PV_MINOR="${BASH_REMATCH[2]}"
+        _PV_PATCH="${BASH_REMATCH[4]:-0}"
+        _PV_EXTRA="${BASH_REMATCH[6]:-0}"
+        suffix="${BASH_REMATCH[7]}"
+    else
+        return 1
+    fi
+
+    _PV_SUFFIX_TYPE=1
+    _PV_SUFFIX_VAL=0
+
+    case "$suffix" in
+        ""|"_re")
+            ;;
+        "_pre"*)
+            local n="${suffix#_pre}"
+            if [ -z "$n" ]; then
+                _PV_SUFFIX_VAL=1
+            elif [[ "$n" =~ ^[0-9]+$ ]]; then
+                _PV_SUFFIX_VAL=$((10#$n))
+            else
+                return 1
+            fi
+            _PV_SUFFIX_TYPE=0
+            ;;
+        "_bug_"*)
+            local l="${suffix#_bug_}"
+            [[ "$l" =~ ^[a-z]$ ]] || return 1
+            _PV_SUFFIX_TYPE=2
+            _PV_SUFFIX_VAL=$(_letter_ord "$l") || return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# 比较版本, 结果放入 _VER_CMP_RESULT
+#   1: v1 > v2    0: v1 == v2    -1: v1 < v2    ?: 解析失败
+# 全程无 fork
+_VER_CMP_RESULT=""
+_ver_cmp_g() {
+    local v1="$1" v2="$2"
+
+    if ! _parse_ver "$v1"; then
+        _VER_CMP_RESULT="?"
+        return 0
+    fi
+    local a_major="$_PV_MAJOR" a_minor="$_PV_MINOR" a_patch="$_PV_PATCH" a_extra="$_PV_EXTRA"
+    local a_type="$_PV_SUFFIX_TYPE" a_val="$_PV_SUFFIX_VAL"
+
+    if ! _parse_ver "$v2"; then
+        _VER_CMP_RESULT="?"
+        return 0
+    fi
+    local b_major="$_PV_MAJOR" b_minor="$_PV_MINOR" b_patch="$_PV_PATCH" b_extra="$_PV_EXTRA"
+    local b_type="$_PV_SUFFIX_TYPE" b_val="$_PV_SUFFIX_VAL"
+
+    _VER_CMP_RESULT=0
+    if   (( a_major != b_major )); then
+        if (( a_major > b_major )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    elif (( a_minor != b_minor )); then
+        if (( a_minor > b_minor )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    elif (( a_patch != b_patch )); then
+        if (( a_patch > b_patch )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    elif (( a_extra != b_extra )); then
+        if (( a_extra > b_extra )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    elif (( a_type != b_type )); then
+        if (( a_type > b_type )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    elif (( a_val != b_val )); then
+        if (( a_val > b_val )); then _VER_CMP_RESULT=1; else _VER_CMP_RESULT=-1; fi
+    fi
+    return 0
+}
+
+# v1 >= v2 返回 0(真), 无 fork
+_ver_ge() {
+    _ver_cmp_g "$1" "$2"
+    [ "$_VER_CMP_RESULT" -ge 0 ] 2>/dev/null
+}
+
+# 从任意字符串中提取第一个版本号到 _EXTRACTED_VER, 无 fork
+_EXTRACTED_VER=""
+_extract_ver_g() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    if [[ "$s" =~ [vV]?([0-9]+\.[0-9]+(\.[0-9]+)?(\.[0-9]+)?(_pre[0-9]*|_re|_bug_[a-z])?) ]]; then
+        _EXTRACTED_VER="${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# 获取远程所有 release, 汇总最高正式版和最高预发布版
+# 输出(制表符): re_name  re_tag  re_ver  pre_name  pre_tag  pre_ver
+# 关键优化: 单次 curl/wget + 单次 awk 输出 (tag pre draft) 三元组, bash 内零 fork 比较
+_get_remote_versions() {
+    local url="https://api.github.com/repos/DC10Xraya/Android-CMD/releases?per_page=100"
+    local json=""
+
+    if [ "$HAS_CURL" -eq 1 ]; then
+        json=$($_CURL -s -L --connect-timeout 5 \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'User-Agent: Android-CMD' \
+            "$url" 2>/dev/null)
+    elif [ "$HAS_WGET" -eq 1 ]; then
+        json=$($_WGET -qO- --timeout=5 \
+            --header='Accept: application/vnd.github+json' \
+            --header='User-Agent: Android-CMD' \
+            "$url" 2>/dev/null)
+    else
+        return 1
+    fi
+
+    [ -z "$json" ] && return 1
+
+    local re_name="" re_tag="" re_ver=""
+    local pre_name="" pre_tag="" pre_ver=""
+    local tag pre draft ver
+
+    while IFS=' ' read -r tag pre draft; do
+        [ -z "$tag" ] && continue
+        [ "$draft" = "true" ] && continue
+
+        _extract_ver_g "$tag" || continue
+        ver="$_EXTRACTED_VER"
+
+        if [ "$pre" = "true" ]; then
+            if [ -z "$pre_ver" ]; then
+                pre_name="$tag"; pre_tag="$tag"; pre_ver="$ver"
+            else
+                _ver_cmp_g "$ver" "$pre_ver"
+                if [ "$_VER_CMP_RESULT" = "1" ]; then
+                    pre_name="$tag"; pre_tag="$tag"; pre_ver="$ver"
+                fi
+            fi
+        else
+            if [ -z "$re_ver" ]; then
+                re_name="$tag"; re_tag="$tag"; re_ver="$ver"
+            else
+                _ver_cmp_g "$ver" "$re_ver"
+                if [ "$_VER_CMP_RESULT" = "1" ]; then
+                    re_name="$tag"; re_tag="$tag"; re_ver="$ver"
+                fi
+            fi
+        fi
+    done < <(
+        printf '%s' "$json" | $_AWK '
+            BEGIN { RS = "\"tag_name\"" ; ORS = "\n" }
+            NR > 1 {
+                line = $0
+                sub(/^[^"]*"/, "", line)
+                sub(/".*/, "", line)
+                if (line == "") next
+                pre = "false"; draft = "false"
+                if ($0 ~ /"prerelease"[[:space:]]*:[[:space:]]*true/) pre = "true"
+                if ($0 ~ /"draft"[[:space:]]*:[[:space:]]*true/) draft = "true"
+                print line " " pre " " draft
+            }
+        '
+    )
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$re_name" "$re_tag" "$re_ver" \
+        "$pre_name" "$pre_tag" "$pre_ver"
+}
+
+_update_cache="$TMP_DIR/latest_version"
+_update_prompted=0
+_update_check_count=0
+# 后台执行检查(异步, 失败静默)
+(
+    rm -f "$_update_cache"
+
+    _upd_info=$(_get_remote_versions 2>/dev/null) || exit 0
+    IFS=$'\t' read -r _upd_re_name _upd_re_tag _upd_re_ver \
+                    _upd_pre_name _upd_pre_tag _upd_pre_ver <<< "$_upd_info"
+
+    _extract_ver_g "$CMD_VER"
+    _upd_cur="$_EXTRACTED_VER"
+    [ -z "$_upd_cur" ] && exit 0
+
+    _upd_name=""; _upd_tag=""; _upd_ver=""
+
+    if [ "$UPDATE_PRE" = "1" ]; then
+        # 关注预发布: 取 pre / re 中较高者提示
+        if [ -n "$_upd_pre_ver" ] && [ -n "$_upd_re_ver" ]; then
+            _ver_cmp_g "$_upd_pre_ver" "$_upd_re_ver"
+            if [ "$_VER_CMP_RESULT" = "1" ]; then
+                _upd_name="$_upd_pre_name"; _upd_tag="$_upd_pre_tag"; _upd_ver="$_upd_pre_ver"
+            else
+                _upd_name="$_upd_re_name"; _upd_tag="$_upd_re_tag"; _upd_ver="$_upd_re_ver"
+            fi
+        elif [ -n "$_upd_pre_ver" ]; then
+            _upd_name="$_upd_pre_name"; _upd_tag="$_upd_pre_tag"; _upd_ver="$_upd_pre_ver"
+        else
+            _upd_name="$_upd_re_name"; _upd_tag="$_upd_re_tag"; _upd_ver="$_upd_re_ver"
+        fi
+    else
+        # 不关注预发布: 只提示正式版
+        _upd_name="$_upd_re_name"; _upd_tag="$_upd_re_tag"; _upd_ver="$_upd_re_ver"
+    fi
+
+    if [ -n "$_upd_ver" ] && [ -n "$_upd_cur" ]; then
+        if ! _ver_ge "$_upd_cur" "$_upd_ver"; then
+            printf '%s\n%s\n' "$_upd_name" "$_upd_tag" > "$_update_cache"
+        fi
+    fi
+) >/dev/null 2>&1 &
+
+cmd_update() {
+    if [ "${1:-}" = "--pre" ]; then
+        if [ $# -ne 2 ]; then
+            err "用法: UPDATE --pre <0|1>"
+            return 1
+        fi
+        case "$2" in
+            0|1)
+                UPDATE_PRE="$2"
+                save_config
+                if [ "$UPDATE_PRE" = "1" ]; then
+                    cecho "已关注预发布版本 (UPDATE --pre 1)"
+                else
+                    cecho "已取消关注预发布版本 (UPDATE --pre 0)"
+                fi
+                return 0
+                ;;
+            *)
+                err "UPDATE --pre 只接受 0 或 1"
+                return 1
+                ;;
         esac
-    else
-        CMD_prompt_fg___="$FG"             # 跟随用户自定义
     fi
-    # sp
-    if [ $_IAMDC10XRAY_ -eq 1 ]; then
-        CMD_prompt_fg___='38;5;201' 
+
+    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+        cecho -b "用法: UPDATE [--pre <0|1>]"
+        cecho "  --pre 0    不关注预发布(默认)"
+        cecho "  --pre 1    关注预发布，同时比较正式版和预发布版"
+        return 0
     fi
-    
-    # 显示更新提示(仅检查5次)
-    if [ $_update_prompted -eq 0 ] && [ $_update_check_count -lt 5 ]; then
-    if [ -f "$_update_cache" ] && [ -s "$_update_cache" ]; then
-        new_tag=$(cat "$_update_cache")
-        new_ver=$(_extract_ver "$new_tag")
-        cur_ver=$(_extract_ver "$CMD_VER")
-        cecho -c 96 -b "[UPDATE]发现新版本: $cur_ver -> $new_tag (使用 UPDATE 查看详情)"
-        _update_prompted=1
+
+    if [ $# -gt 0 ]; then
+        err "未知参数: $1, 使用 UPDATE -h 查看帮助"
+        return 1
+    fi
+
+    local info
+    info=$(_get_remote_versions) || {
+        err "获取发布信息失败, 请检查网络"
+        cecho -c "#6CA8F1" -u "https://github.com/DC10Xraya/Android-CMD/releases"
+        return 1
+    }
+
+    local re_name re_tag re_ver
+    local pre_name pre_tag pre_ver
+    IFS=$'\t' read -r re_name re_tag re_ver pre_name pre_tag pre_ver <<< "$info"
+
+    _extract_ver_g "$CMD_VER"
+    local current_ver="$_EXTRACTED_VER"
+    if [ -z "$current_ver" ]; then
+        err "无法解析当前版本: $CMD_VER"
+        return 1
+    fi
+
+    local release_url="https://github.com/DC10Xraya/Android-CMD/releases"
+    local tag_url_re=""
+    local tag_url_pre=""
+    [ -n "$re_tag" ]  && tag_url_re="$release_url/tag/$re_tag"
+    [ -n "$pre_tag" ] && tag_url_pre="$release_url/tag/$pre_tag"
+
+    local cmp_re_now cmp_pre_now cmp_pre_re
+
+    # ================= UPDATE_PRE=0：只看正式版 =================
+    if [ "$UPDATE_PRE" != "1" ]; then
+        if [ -z "$re_ver" ]; then
+            err "未找到正式版本"
+            cecho -c "#6CA8F1" -u "$release_url"
+            return 1
+        fi
+
+        _ver_cmp_g "$re_ver" "$current_ver"
+        cmp_re_now="$_VER_CMP_RESULT"
+
+        case "$cmp_re_now" in
+            1)
+                cecho -c 96 "发现新正式版: $re_name"
+                cecho -c 96 "当前版本: $CMD_VER"
+                cecho -c "#6CA8F1" -u "$tag_url_re"
+                ;;
+            0)
+                cecho -c 92 "已是最新正式版: $re_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+                ;;
+            -1)
+                # 当前比正式版新, 判断是否是预发布版本
+                local is_pre_release=0
+                if [ -n "$pre_ver" ]; then
+                    _ver_cmp_g "$pre_ver" "$current_ver"
+                    cmp_pre_now="$_VER_CMP_RESULT"
+                    [ "$cmp_pre_now" = "0" ] && is_pre_release=1
+                fi
+
+                if [ "$is_pre_release" -eq 1 ]; then
+                    cecho -c 93 "当前是预发布版本: $pre_name"
+                    cecho -c 90 "最新正式版: $re_name"
+                    cecho -c 90 "使用 UPDATE --pre 1 可关注预发布版本"
+                    cecho -c "#6CA8F1" -u "$release_url"
+                else
+                    err "未知版本: 当前版本高于仓库所有正式/预发布版本"
+                    cecho -c 93 "当前版本: $CMD_VER"
+                    cecho -c 93 "最新正式: $re_name"
+                    [ -n "$pre_ver" ] && cecho -c 93 "最新预发布: $pre_name"
+                    cecho -c "#6CA8F1" -u "$release_url"
+                fi
+                ;;
+            *)
+                err "版本比较失败"
+                return 1
+                ;;
+        esac
+
         rm -f "$_update_cache"
+        return 0
+    fi
+
+    # ================= UPDATE_PRE=1：关注预发布 =================
+    if [ -z "$pre_ver" ] && [ -z "$re_ver" ]; then
+        err "仓库无可用版本"
+        cecho -c "#6CA8F1" -u "$release_url"
+        return 1
+    fi
+
+    # 只有正式版
+    if [ -z "$pre_ver" ]; then
+        cecho -c 93 "仓库暂无预发布版本，按正式版处理"
+        _ver_cmp_g "$re_ver" "$current_ver"
+        cmp_re_now="$_VER_CMP_RESULT"
+        case "$cmp_re_now" in
+            1)
+                cecho -c 96 "发现新正式版: $re_name"
+                cecho -c "#6CA8F1" -u "$tag_url_re"
+                ;;
+            0)
+                cecho -c 92 "已是最新正式版: $re_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+                ;;
+            -1)
+                err "未知版本: 当前版本高于仓库最新正式版"
+                cecho -c 93 "当前版本: $CMD_VER"
+                cecho -c 93 "最新正式: $re_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+                ;;
+            *)
+                err "版本比较失败"
+                return 1
+                ;;
+        esac
+        rm -f "$_update_cache"
+        return 0
+    fi
+
+    # 只有预发布版
+    if [ -z "$re_ver" ]; then
+        _ver_cmp_g "$pre_ver" "$current_ver"
+        cmp_pre_now="$_VER_CMP_RESULT"
+        case "$cmp_pre_now" in
+            1)
+                cecho -c 96 "发现新预发布版本: $pre_name (PRE)"
+                cecho -c "#6CA8F1" -u "$tag_url_pre"
+                ;;
+            0)
+                cecho -c 92 "已是最新预发布版本: $pre_name (PRE)"
+                cecho -c "#6CA8F1" -u "$release_url"
+                ;;
+            -1)
+                err "未知版本: 当前版本高于仓库最新预发布版"
+                cecho -c 93 "当前版本: $CMD_VER"
+                cecho -c 93 "最新预发布: $pre_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+                ;;
+            *)
+                err "版本比较失败"
+                return 1
+                ;;
+        esac
+        rm -f "$_update_cache"
+        return 0
+    fi
+
+    _ver_cmp_g "$pre_ver" "$re_ver"
+    cmp_pre_re="$_VER_CMP_RESULT"
+    _ver_cmp_g "$pre_ver" "$current_ver"
+    cmp_pre_now="$_VER_CMP_RESULT"
+    _ver_cmp_g "$re_ver" "$current_ver"
+    cmp_re_now="$_VER_CMP_RESULT"
+
+    if [ "$cmp_pre_re" = "1" ]; then
+        # 正常情况: pre > re
+        if [ "$cmp_re_now" = "1" ]; then
+            # pre > re > now
+            cecho -c 96 "发现新正式版: $re_name"
+            cecho -c 96 "发现新预发布: $pre_name (PRE)"
+            cecho -c 90 "当前版本: $CMD_VER"
+            cecho -c "#6CA8F1" -u "$tag_url_pre"
+            cecho -c "#6CA8F1" -u "$tag_url_re"
+
+        elif [ "$cmp_re_now" = "0" ]; then
+            # pre > re = now
+            cecho -c 93 "当前已是最新正式版: $re_name"
+            cecho -c 96 "发现新预发布: $pre_name (PRE)"
+            cecho -c "#6CA8F1" -u "$tag_url_pre"
+
+        else
+            # now > re
+            if [ "$cmp_pre_now" = "0" ]; then
+                # pre = now > re
+                cecho -c 92 "已是最新预发布版本: $pre_name (PRE)"
+                cecho -c 90 "最新正式版: $re_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+
+            elif [ "$cmp_pre_now" = "-1" ]; then
+                # now > pre > re
+                err "未知版本: 当前版本高于仓库所有正式/预发布版本"
+                cecho -c 93 "当前版本: $CMD_VER"
+                cecho -c 93 "最新正式: $re_name"
+                cecho -c 93 "最新预发布: $pre_name"
+                cecho -c "#6CA8F1" -u "$release_url"
+
+            else
+                # pre > now > re
+                cecho -c 96 "当前超过正式版，发现新预发布: $pre_name (PRE)"
+                cecho -c 90 "当前版本: $CMD_VER   最新正式: $re_name"
+                cecho -c "#6CA8F1" -u "$tag_url_pre"
+            fi
+        fi
     else
-        _update_check_count=$((_update_check_count + 1))
-    fi
-    fi
-   # 构建命令提示符(fix)
-   # 避免长输入时回绕、光标错位、提示符重复渲染
-   PROMPT_STR=$(printf '\001\033[%s;%sm\002%s%s \001\033[0m\002' \
-   "$BG" "$CMD_prompt_fg___" "$USERNAME" "$PROMPT_SYMBOL")
-    if ! read -e -r -p "$PROMPT_STR" input; then
-        cmd_exit15
-    fi
-    # 判断空输入或纯注释
-    ignore=0
-    if [ -z "$input" ]; then
-        ignore=1
-    else
-        # 去除首尾空格
-        trimmed="${input#"${input%%[![:space:]]*}"}"
-        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-        if [ -z "$trimmed" ] || [[ "$trimmed" == \#* ]]; then
-            ignore=1
+        # 异常/少见情况: re >= pre
+        err "版本关系异常: 正式版 $re_ver 不低于预发布 $pre_ver"
+
+        if [ "$cmp_re_now" = "1" ]; then
+            cecho -c 96 "发现新正式版: $re_name"
+            cecho -c 90 "预发布: $pre_name 较旧，忽略"
+            cecho -c "#6CA8F1" -u "$tag_url_re"
+
+        elif [ "$cmp_re_now" = "0" ]; then
+            cecho -c 92 "已是最新正式版: $re_name"
+            cecho -c "#6CA8F1" -u "$release_url"
+
+        else
+            err "未知版本: 当前版本高于仓库所有正式/预发布版本"
+            cecho -c 93 "当前版本: $CMD_VER"
+            cecho -c 93 "最新正式: $re_name"
+            cecho -c 93 "最新预发布: $pre_name"
+            cecho -c "#6CA8F1" -u "$release_url"
         fi
     fi
 
-    if [ $ignore -eq 1 ]; then
-        printf '\033[0m'      # 只重置颜色, 不换行
-        continue
-    fi
+    rm -f "$_update_cache"
+    return 0
+}
 
-    # 非忽略输入: 记录历史并换行
-    history -s "$input"   # 添加到当前会话历史
-    history -w "$HISTFILE" # 立即写入文件
-    printf '\033[0m\n'
-    
-    #dev0.205核心更新: 使用自定义解析器(谁还记得dev0.56的IFS)
-    parse_line "$input"
-    if [ ${#PARSED_ARGS[@]} -eq 0 ]; then
-        continue
-    fi
-
-    # 提取命令(第一个单词, 转为小写)和参数数组
-    cmd="${PARSED_ARGS[0],,}"
-    args_array=("${PARSED_ARGS[@]:1}")
-
-    # 命令分发(按照命令列表顺序)
-    # 大部分命令直接通过lazy load加载(在lazy load的内部检查函数是否已定义, 如果已经定义就直接加载, 不需要写在这)
+# ---------- 命令分发 ----------
+# 参数: $1 = 命令名(大小写不敏感), $2... = 参数
+_dispatch_cmd() {
+    local cmd="${1,,}"
+    shift
+    local args_array=("$@")
     case "$cmd" in
-    # ---------- 内部别名 ----------
     copy|cp)           cmd_copy "${args_array[@]}" ;;
     del|rm|erase)      cmd_del "${args_array[@]}" ;;
     md|mkdir)          cmd_md "${args_array[@]}" ;;
@@ -5293,15 +6686,17 @@ while true; do
     env|export)        cmd_env "${args_array[@]}" ;;
     exts|exes)         cmd_exts "${args_array[@]}" ;;
     tl|tasklist)       cmd_tasklist ;;
-    help|/? )          cmd_help ;;
+    help|\?|/\?|/？|？) QAQ_cmd_help ;;
     cls|clear)         cmd_cls "${args_array[@]}" ;;
     clsd|cleard)       cmd_clsd "${args_array[@]}" ;;
     echo|print)        cmd_echo "${args_array[@]}" ;;
     exit|exit15)       cmd_exit15 ;;
     exitk|killself)    cmd_killself ;;
-    cmdinfo|info)      cmd_cmdinfo ;;
+    info)              cmd_info ;;
     etc|config)        cmd_config "${args_array[@]}" ;;
     c|cmd|eval)        cmd_cmd "${args_array[@]}" ;;
+    cc|multicmd|mc)    cmd_cc ;;
+    sh|run|r)          cmd_sh "${args_array[@]}" ;;
     fun|function)      cmd_fun "${args_array[@]}" ;;
     # ---------- 显式调用 ----------
     df)
@@ -5311,8 +6706,19 @@ while true; do
         $_DF "${args_array[@]}" 2>&1 | while IFS= read -r line; do cecho "$line"; done
     fi
     ;;
-    path)              cecho "$PATH" ;;
-    home)              cecho "$HOME" ;;
+    home)
+    if [ "${args_array[0]:-}" = "set" ] && [ -n "${args_array[1]:-}" ]; then
+        _newhome="${args_array[1]}"
+        if confirm "确定更改HOME目录? (可能导致一大堆莫名其妙的问题)"; then
+            export HOME="$_newhome"
+            cecho "HOME 已更新"
+        else
+            echo ""
+        fi
+    else
+        cecho "$HOME"
+    fi
+    ;;
     scriptdir|sdir)    cecho "$SCRIPT_DIR" ;;
     self)              cecho "$0" ;;
     netstat)
@@ -5332,18 +6738,21 @@ while true; do
     printf)            printf "${args_array[@]}"; echo "" ;;
     err)               err "${args_array[*]}" ;;
     cd)                cd "${args_array[*]}" ;;
-    # ---------- debug ------------
+    # ---------- debug/laugh ------------
     debug|debug_|debug__|debug_help|help_debug|debughelp|helpdebug|debug___|debug_help_|help_debug_)
         err "调试模式还在设计中(真的吗?)" ;;
     debug_1)                    err "No Way" ;;
     debug_2|debug_wc|codewcme)  debug_2 ;;
-    debug_0|debug_lev)          debug_0 ;;
+    debug_0|debug_lev)          debug_0 "${args_array[@]}" ;;
     # brooooooo
     $CMD_delimiter|cmd_delimiter|$CMD_delimiter/cmd_delimiter)   err "bro 复制这个何意味?" ;;
     $USERNAME)    cmd_username ;;
     911)          err "bro 这并不好笑" ;;
     ctrl+c|^c)    cmd_exit15_0 ;;
-    # ---------- SP ----------
+    helo)         err "helo: 命令未找到: 你打错了help吧" ;;
+    deta)         err "deta: 命令未找到: 你打错了date吧" ;;
+    '?!'|'?！'|'？!'|'？！'|'!?'|'!？'|'！?'|'！？')   err '?!问号和感叹号!?' ;;
+    # ---------- laugh ----------
     114514)     lazy_load "laugh_114514" && cmd_laugh_114514 ;;
     100|dve100) lazy_load "laugh_100" && cmd_laugh_100 ;;
     200|dev200) lazy_load "laugh_200" && cmd_laugh_200 ;;
@@ -5366,14 +6775,25 @@ while true; do
         lazy_load "ping6" && cmd_ping6 "${args_array[@]}" ;;
     # ---------- 资源目录别名 ----------
     codewc|wccode) lazy_load "codewc" && cmd_codewc "${args_array[@]}" ;;
-    b64)       lazy_load "base64" && cmd_base64 "${args_array[@]}" ;;
     tm|top|taskmgr|taskmanager) lazy_load "taskmanager" && cmd_taskmanager ;;
     systeminfo|sysinfo) lazy_load "systeminfo" && cmd_systeminfo ;;
-    sha512|sha512sum) lazy_load "sha512" && cmd_sha512 "${args_array[@]}" ;;
-    sha256|sha256sum) lazy_load "sha256" && cmd_sha256 "${args_array[@]}" ;;
-    sha1|sha1sum) lazy_load "sha1" && cmd_sha1 "${args_array[@]}" ;;
     300|china)   lazy_load "china" && cmd_china "${args_array[@]}" ;;
+    # 哈希/编码类合集: resource/psd/cmd_checksum.bash
+    sha256|sha256sum)          lazy_load checksum && cmd_sha256 "${args_array[@]}" ;;
+    sha1|sha1sum)              lazy_load checksum && cmd_sha1   "${args_array[@]}" ;;
+    sha224|sha224sum)          lazy_load checksum && cmd_sha224 "${args_array[@]}" ;;
+    sha384|sha384sum)          lazy_load checksum && cmd_sha384 "${args_array[@]}" ;;
+    sha512|sha512sum)          lazy_load checksum && cmd_sha512 "${args_array[@]}" ;;
+    md5|md5sum)                lazy_load checksum && cmd_md5    "${args_array[@]}" ;;
+    b2sum|blake2)              lazy_load checksum && cmd_b2sum  "${args_array[@]}" ;;
+    crc32)                     lazy_load checksum && cmd_crc32  "${args_array[@]}" ;;
+    b64|base64)                lazy_load checksum && cmd_base64 "${args_array[@]}" ;;
+    b32|base32)                lazy_load checksum && cmd_base32 "${args_array[@]}" ;;
+    # 计算器合集: resource/other/cmd_calc_all.bash
+    awkc)                      lazy_load calc_all && cmd_awkc "${args_array[@]}" ;;
+    bc)                        lazy_load calc_all && cmd_bc "${args_array[@]}" ;;
     # ---------- 自定义函数 / 懒惰加载 / 系统命令(tip) / 未知命令 ----------
+    # 大部分命令直接通过lazy load加载(在lazy load的内部检查函数是否已定义, 如果已经定义就直接加载)
     *)
     # 优先执行用户自定义函数
     if type -t "$cmd" >/dev/null 2>&1 && [[ $(type -t "$cmd") == "function" ]]; then
@@ -5395,4 +6815,100 @@ fi
     fi
     ;;
 esac
+}
+# SP 版本提示符调色板(固定, 提前构建避免每轮重建数组)
+SP_PALETTE=(196 202 208 214 220 226 46 51 21 27 33 39 45 81 117 153 129 165 201 207 213 219 225)
+SP_PAL_LEN=${#SP_PALETTE[@]}
+# ---------- 主循环 ----------
+while true; do
+    # 判断是否使用默认颜色(黑底亮白)
+    if [ "$BG" = "40" ] && [ "$FG" = "97" ]; then
+        case "$PRIV_LEVEL" in
+            root) CMD_prompt_fg___=95 ;;   # 紫色
+            adb)  CMD_prompt_fg___=96 ;;   # 蓝色
+            *)    CMD_prompt_fg___=97 ;;   # 普通用户亮白
+        esac
+    else
+        CMD_prompt_fg___="$FG"             # 跟随用户自定义
+    fi
+    # sp
+    if [ $_IAMDC10XRAY_ -eq 1 ]; then
+        CMD_prompt_fg___='38;5;201'
+    fi
+
+    # 显示更新提示(仅检查5次)
+    if [ $_update_prompted -eq 0 ] && [ $_update_check_count -lt 5 ]; then
+        if [ -f "$_update_cache" ] && [ -s "$_update_cache" ]; then
+            new_name=""
+            new_tag=""
+            {
+                IFS= read -r new_name
+                IFS= read -r new_tag
+            } < "$_update_cache"
+            cecho -c 96 -b "[UPDATE]发现新版本: $new_name ($new_tag) (使用 UPDATE 查看详情)"
+            _update_prompted=1
+            rm -f "$_update_cache"
+        else
+            _update_check_count=$((_update_check_count + 1))
+        fi
+    fi
+
+    # 构建命令提示符
+    # 避免长输入时回绕、光标错位、提示符重复渲染
+    if [ "$_IAMDC10XRAY_" = "1" ]; then
+        # SP 版本: 用户名逐字符彩虹着色, 字符数与用户名一致
+        _sp_len=${#USERNAME}
+        _sp_prompt=""
+        for (( _sp_i=0; _sp_i<_sp_len; _sp_i++ )); do
+            printf -v _sp_seg '\001\033[%s;38;5;%sm\002%s' \
+                "$BG" "${SP_PALETTE[$(( _sp_i % SP_PAL_LEN ))]}" "${USERNAME:_sp_i:1}"
+            _sp_prompt+="$_sp_seg"
+        done
+        # 符号沿用 SP 粉紫主色(201)
+        printf -v PROMPT_STR '%s\001\033[%s;38;5;201m\002%s \001\033[0m\002' \
+            "$_sp_prompt" "$BG" "$PROMPT_SYMBOL"
+    else
+        printf -v PROMPT_STR '\001\033[%s;%sm\002%s%s \001\033[0m\002' \
+            "$BG" "$CMD_prompt_fg___" "$USERNAME" "$PROMPT_SYMBOL"
+    fi
+
+    if ! read -e -r -p "$PROMPT_STR" input; then
+        cmd_exit15
+    fi
+
+    # 判断空输入或纯注释
+    ignore=0
+    if [ -z "$input" ]; then
+        ignore=1
+    else
+        # 去除首尾空格
+        trimmed="${input#"${input%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        if [ -z "$trimmed" ] || [[ "$trimmed" == \#* ]]; then
+            ignore=1
+        fi
+    fi
+
+    if [ $ignore -eq 1 ]; then
+        printf '\033[0m'      # 只重置颜色, 不换行
+        continue
+    fi
+
+    # 非忽略输入: 记录历史并换行
+    history -s "$input"    # 添加到当前会话历史
+    history -w "$HISTFILE" # 立即写入文件
+    printf '\033[0m\n'
+
+    # dev0.205核心更新: 使用自定义解析器(谁还记得dev0.56的IFS)
+    parse_line "$input"
+    if [ ${#PARSED_ARGS[@]} -eq 0 ]; then
+        continue
+    fi
+
+    # 提取命令(第一个单词, 转为小写)和参数数组
+    cmd="${PARSED_ARGS[0],,}"
+    args_array=("${PARSED_ARGS[@]:1}")
+
+    # 命令分发(统一入口见上)
+    _dispatch_cmd "$cmd" "${args_array[@]}"
 done
