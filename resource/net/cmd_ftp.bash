@@ -90,12 +90,12 @@ fi
     # ---------- 公共逻辑：ping 检测 ----------
     cecho "正在测试主机 $host 可达性..."
     if ! ping -c 1 -W 3 "$host" >/dev/null 2>&1; then
-        cecho "主机 $host 不可达"
+        err "主机 $host 不可达"
         if ! confirm "是否仍然进入交互模式?"; then
             return 0
         fi
     else
-        cecho "主机 $host 可达"
+        cecho -c 32  "主机 $host 可达"
     fi
 
     # 检测 curl
@@ -108,7 +108,7 @@ fi
     local base_url="ftp://${ftp_user}${ftp_pass:+:$ftp_pass}@$host:$port"
     local current_path="$path"
     echo ""
-    cecho -b "已进入FTP交互模式 (按Ctrl+C取消正在运行的操作,输入exit/ftp退出交互模式)"
+    cecho -b "已进入FTP交互模式 (按Ctrl+C取消正在运行的操作, 输入exit/ftp退出交互模式)"
     cecho -b "当前目录: $current_path"
 
     # 保存旧陷阱,设置自己的 INT 陷阱(只设置标志)
